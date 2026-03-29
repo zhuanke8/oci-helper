@@ -63,6 +63,13 @@ public class SelectConfigHandler extends AbstractCallbackHandler {
                 )
         ));
 
+        keyboard.add(new InlineKeyboardRow(
+                KeyboardBuilder.button(
+                        "👥 租户用户管理",
+                        "tenant_user_management:" + userId
+                )
+        ));
+
         // 返回按钮
         keyboard.add(new InlineKeyboardRow(
                 KeyboardBuilder.button("◀️ 返回配置列表", "config_list")

@@ -127,6 +127,8 @@ public class ConfigSessionStorage {
         RESTORE_PASSWORD,
         IP_BLACKLIST_ADD,
         IP_BLACKLIST_ADD_RANGE,
-        IP_BLACKLIST_REMOVE
+        IP_BLACKLIST_REMOVE,
+        TENANT_USER_CHANGE_PASSWORD,
+        TENANT_USER_RECOVERY_EMAIL
     }
 }

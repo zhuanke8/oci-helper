@@ -8,12 +8,15 @@ import com.yohann.ocihelper.telegram.service.AiChatService;
 import com.yohann.ocihelper.telegram.service.SshService;
 import com.yohann.ocihelper.telegram.storage.SshConnectionStorage;
 import com.yohann.ocihelper.telegram.storage.ConfigSessionStorage;
+import com.yohann.ocihelper.telegram.storage.TenantUserSelectionStorage;
 import com.yohann.ocihelper.telegram.utils.MarkdownFormatter;
+import com.yohann.ocihelper.telegram.utils.TenantUserMenuHelper;
 import lombok.extern.slf4j.Slf4j;
 import org.telegram.telegrambots.client.okhttp.OkHttpTelegramClient;
 import org.telegram.telegrambots.longpolling.util.LongPollingSingleThreadUpdateConsumer;
 import org.telegram.telegrambots.meta.api.methods.botapimethods.BotApiMethod;
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
+import org.telegram.telegrambots.meta.api.methods.updatingmessages.EditMessageText;
 import org.telegram.telegrambots.meta.api.objects.Update;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.InlineKeyboardMarkup;
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
@@ -22,6 +25,7 @@ import org.telegram.telegrambots.meta.generics.TelegramClient;
 import java.io.Serializable;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.regex.Pattern;
 
 /**
  * Telegram Bot 主类
@@ -36,6 +40,9 @@ import java.util.concurrent.CompletableFuture;
  */
 @Slf4j
 public class TgBot implements LongPollingSingleThreadUpdateConsumer {
+
+    private static final Pattern EMAIL_PATTERN =
+            Pattern.compile("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
 
     private final String BOT_TOKEN;
     private final String CHAT_ID;
@@ -116,6 +123,10 @@ public class TgBot implements LongPollingSingleThreadUpdateConsumer {
                 handleIpBlacklistAddRangeInput(chatId, messageText);
             } else if (sessionType == ConfigSessionStorage.SessionType.IP_BLACKLIST_REMOVE) {
                 handleIpBlacklistRemoveInput(chatId, messageText);
+            } else if (sessionType == ConfigSessionStorage.SessionType.TENANT_USER_CHANGE_PASSWORD) {
+                handleTenantUserChangePasswordInput(chatId, messageText);
+            } else if (sessionType == ConfigSessionStorage.SessionType.TENANT_USER_RECOVERY_EMAIL) {
+                handleTenantUserRecoveryEmailInput(chatId, messageText);
             }
             return;
         }
@@ -823,6 +834,174 @@ public class TgBot implements LongPollingSingleThreadUpdateConsumer {
      */
     private void sendMessage(long chatId, String text) {
         sendMessage(chatId, text, false);
+    }
+
+    private void sendMessage(long chatId, String text, InlineKeyboardMarkup markup) {
+        try {
+            telegramClient.execute(SendMessage.builder()
+                    .chatId(chatId)
+                    .text(MarkdownFormatter.truncate(text))
+                    .parseMode("Markdown")
+                    .replyMarkup(markup)
+                    .build());
+        } catch (TelegramApiException e) {
+            log.error("发送带按钮的消息失败: text={}", text, e);
+            try {
+                telegramClient.execute(SendMessage.builder()
+                        .chatId(chatId)
+                        .text(text)
+                        .replyMarkup(markup)
+                        .build());
+                log.info("带按钮消息重新发送成功（不使用 Markdown）");
+            } catch (TelegramApiException fallbackEx) {
+                log.error("带按钮消息重新发送也失败", fallbackEx);
+            }
+        }
+    }
+
+    private void editMessage(long chatId, Integer messageId, String text, InlineKeyboardMarkup markup) throws TelegramApiException {
+        telegramClient.execute(EditMessageText.builder()
+                .chatId(chatId)
+                .messageId(messageId)
+                .text(MarkdownFormatter.truncate(text))
+                .parseMode("Markdown")
+                .replyMarkup(markup)
+                .build());
+    }
+
+    private void editOrSendMessage(long chatId, Integer messageId, String text, InlineKeyboardMarkup markup) {
+        if (messageId != null) {
+            try {
+                editMessage(chatId, messageId, text, markup);
+                return;
+            } catch (TelegramApiException e) {
+                log.warn("编辑 TG 消息失败，改为发送新消息。chatId={}, messageId={}", chatId, messageId, e);
+            }
+        }
+        sendMessage(chatId, text, markup);
+    }
+
+    private Integer getSessionMessageId(ConfigSessionStorage.SessionState state) {
+        if (state == null || state.getData().get("messageId") == null) {
+            return null;
+        }
+        Object messageId = state.getData().get("messageId");
+        if (messageId instanceof Integer) {
+            return (Integer) messageId;
+        }
+        return Integer.parseInt(String.valueOf(messageId));
+    }
+
+    private void handleTenantUserChangePasswordInput(long chatId, String password) {
+        ConfigSessionStorage configStorage = ConfigSessionStorage.getInstance();
+        ConfigSessionStorage.SessionState state = configStorage.getSessionState(chatId);
+        if (state == null) {
+            sendMessage(chatId, "❌ 会话已失效，请重新进入租户用户管理");
+            return;
+        }
+
+        String normalizedPassword = password == null ? "" : password.trim();
+        if (normalizedPassword.isEmpty()) {
+            sendMessage(chatId, "❌ 密码不能为空，请重新输入或发送 /cancel 取消");
+            return;
+        }
+
+        String ociCfgId = String.valueOf(state.getData().get("ociCfgId"));
+        String userId = String.valueOf(state.getData().get("userId"));
+        int userIndex = Integer.parseInt(String.valueOf(state.getData().get("userIndex")));
+        Integer messageId = getSessionMessageId(state);
+
+        try {
+            com.yohann.ocihelper.service.ITenantService tenantService =
+                    SpringUtil.getBean(com.yohann.ocihelper.service.ITenantService.class);
+            com.yohann.ocihelper.bean.params.oci.tenant.UpdateUserPasswordParams params =
+                    new com.yohann.ocihelper.bean.params.oci.tenant.UpdateUserPasswordParams();
+            params.setOciCfgId(ociCfgId);
+            params.setUserId(userId);
+            params.setPassword(normalizedPassword);
+            params.setBypassNotification(Boolean.FALSE);
+            tenantService.updateUserPassword(params);
+
+            TenantUserSelectionStorage userStorage = TenantUserSelectionStorage.getInstance();
+            com.yohann.ocihelper.bean.response.oci.tenant.TenantInfoRsp.TenantUserInfo user = userStorage.getUserByIndex(chatId, userIndex);
+            String text = user == null
+                    ? "✅ 指定密码修改成功"
+                    : TenantUserMenuHelper.buildUserDetailText(user, userIndex, "✅ 指定密码修改成功");
+            InlineKeyboardMarkup markup = user == null
+                    ? TenantUserMenuHelper.buildBackToListMarkup(ociCfgId)
+                    : TenantUserMenuHelper.buildUserDetailMarkup(ociCfgId, userIndex);
+
+            configStorage.clearSession(chatId);
+            editOrSendMessage(chatId, messageId, text, markup);
+        } catch (Exception e) {
+            log.error("Failed to change tenant user password: chatId={}, userId={}", chatId, userId, e);
+            TenantUserSelectionStorage userStorage = TenantUserSelectionStorage.getInstance();
+            com.yohann.ocihelper.bean.response.oci.tenant.TenantInfoRsp.TenantUserInfo user = userStorage.getUserByIndex(chatId, userIndex);
+            String text = user == null
+                    ? "❌ 修改密码失败: " + e.getMessage()
+                    : TenantUserMenuHelper.buildUserDetailText(user, userIndex, "❌ 修改密码失败: " + e.getMessage());
+            InlineKeyboardMarkup markup = user == null
+                    ? TenantUserMenuHelper.buildBackToListMarkup(ociCfgId)
+                    : TenantUserMenuHelper.buildUserDetailMarkup(ociCfgId, userIndex);
+            configStorage.clearSession(chatId);
+            editOrSendMessage(chatId, messageId, text, markup);
+        }
+    }
+
+    private void handleTenantUserRecoveryEmailInput(long chatId, String recoveryEmail) {
+        ConfigSessionStorage configStorage = ConfigSessionStorage.getInstance();
+        ConfigSessionStorage.SessionState state = configStorage.getSessionState(chatId);
+        if (state == null) {
+            sendMessage(chatId, "❌ 会话已失效，请重新进入租户用户管理");
+            return;
+        }
+
+        String normalizedEmail = recoveryEmail == null ? "" : recoveryEmail.trim().toLowerCase();
+        if (!EMAIL_PATTERN.matcher(normalizedEmail).matches()) {
+            sendMessage(chatId, "❌ recovery email 格式不正确，请重新输入标准邮箱地址或发送 /cancel 取消");
+            return;
+        }
+
+        String ociCfgId = String.valueOf(state.getData().get("ociCfgId"));
+        String userId = String.valueOf(state.getData().get("userId"));
+        int userIndex = Integer.parseInt(String.valueOf(state.getData().get("userIndex")));
+        Integer messageId = getSessionMessageId(state);
+
+        try {
+            com.yohann.ocihelper.service.ITenantService tenantService =
+                    SpringUtil.getBean(com.yohann.ocihelper.service.ITenantService.class);
+            com.yohann.ocihelper.bean.params.oci.tenant.UpdateUserRecoveryEmailParams params =
+                    new com.yohann.ocihelper.bean.params.oci.tenant.UpdateUserRecoveryEmailParams();
+            params.setOciCfgId(ociCfgId);
+            params.setUserId(userId);
+            params.setRecoveryEmail(normalizedEmail);
+            String updatedRecoveryEmail = tenantService.updateRecoveryEmail(params);
+
+            TenantUserSelectionStorage userStorage = TenantUserSelectionStorage.getInstance();
+            com.yohann.ocihelper.bean.response.oci.tenant.TenantInfoRsp.TenantUserInfo user = userStorage.getUserByIndex(chatId, userIndex);
+            String notice = "✅ recovery email 已更新为: " + updatedRecoveryEmail;
+            String text = user == null
+                    ? notice
+                    : TenantUserMenuHelper.buildUserDetailText(user, userIndex, notice);
+            InlineKeyboardMarkup markup = user == null
+                    ? TenantUserMenuHelper.buildBackToListMarkup(ociCfgId)
+                    : TenantUserMenuHelper.buildUserDetailMarkup(ociCfgId, userIndex);
+
+            configStorage.clearSession(chatId);
+            editOrSendMessage(chatId, messageId, text, markup);
+        } catch (Exception e) {
+            log.error("Failed to update tenant user recovery email: chatId={}, userId={}", chatId, userId, e);
+            TenantUserSelectionStorage userStorage = TenantUserSelectionStorage.getInstance();
+            com.yohann.ocihelper.bean.response.oci.tenant.TenantInfoRsp.TenantUserInfo user = userStorage.getUserByIndex(chatId, userIndex);
+            String text = user == null
+                    ? "❌ 更新 recovery email 失败: " + e.getMessage()
+                    : TenantUserMenuHelper.buildUserDetailText(user, userIndex, "❌ 更新 recovery email 失败: " + e.getMessage());
+            InlineKeyboardMarkup markup = user == null
+                    ? TenantUserMenuHelper.buildBackToListMarkup(ociCfgId)
+                    : TenantUserMenuHelper.buildUserDetailMarkup(ociCfgId, userIndex);
+            configStorage.clearSession(chatId);
+            editOrSendMessage(chatId, messageId, text, markup);
+        }
     }
 
     /**
