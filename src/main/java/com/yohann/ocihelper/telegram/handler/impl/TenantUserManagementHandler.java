@@ -16,6 +16,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import org.telegram.telegrambots.meta.api.methods.botapimethods.BotApiMethod;
 import org.telegram.telegrambots.meta.api.objects.CallbackQuery;
+import org.telegram.telegrambots.meta.api.objects.replykeyboard.InlineKeyboardMarkup;
 import org.telegram.telegrambots.meta.generics.TelegramClient;
 
 import java.io.Serializable;
@@ -28,6 +29,8 @@ import java.util.List;
 @Slf4j
 @Component
 public class TenantUserManagementHandler extends AbstractCallbackHandler {
+
+    private static final TenantUserManagementHandler MESSAGE_HELPER = new TenantUserManagementHandler();
 
     @Override
     public BotApiMethod<? extends Serializable> handle(CallbackQuery callbackQuery, TelegramClient telegramClient) {
@@ -52,7 +55,7 @@ public class TenantUserManagementHandler extends AbstractCallbackHandler {
             List<TenantInfoRsp.TenantUserInfo> users = reload ? loadAndCacheUsers(chatId, ociCfgId) : storage.getCachedUsers(chatId);
 
             if (CollectionUtil.isEmpty(users)) {
-                return new TenantUserManagementHandler().buildEditMessage(
+                return buildTenantEditMessage(
                         callbackQuery,
                         "❌ 当前租户下暂无用户",
                         TenantUserMenuHelper.buildBackToConfigMarkup(ociCfgId)
@@ -60,14 +63,14 @@ public class TenantUserManagementHandler extends AbstractCallbackHandler {
             }
 
             clampPage(chatId, ociCfgId, users.size());
-            return new TenantUserManagementHandler().buildEditMessage(
+            return buildTenantEditMessage(
                     callbackQuery,
                     TenantUserMenuHelper.buildUserListText(users, chatId, ociCfgId),
                     TenantUserMenuHelper.buildUserListMarkup(users, chatId, ociCfgId)
             );
         } catch (Exception e) {
             log.error("Failed to render tenant users for ociCfgId: {}", ociCfgId, e);
-            return new TenantUserManagementHandler().buildEditMessage(
+            return buildTenantEditMessage(
                     callbackQuery,
                     "❌ 获取租户用户失败：" + e.getMessage(),
                     TenantUserMenuHelper.buildBackToConfigMarkup(ociCfgId)
@@ -106,6 +109,16 @@ public class TenantUserManagementHandler extends AbstractCallbackHandler {
 
     static String getOciCfgId(long chatId) {
         return TenantUserSelectionStorage.getInstance().getConfigContext(chatId);
+    }
+
+    static BotApiMethod<? extends Serializable> buildTenantEditMessage(CallbackQuery callbackQuery,
+                                                                       String text,
+                                                                       InlineKeyboardMarkup markup) {
+        return MESSAGE_HELPER.buildEditMessage(callbackQuery, text, markup);
+    }
+
+    static BotApiMethod<? extends Serializable> buildTenantEditMessage(CallbackQuery callbackQuery, String text) {
+        return MESSAGE_HELPER.buildEditMessage(callbackQuery, text);
     }
 }
 
@@ -359,7 +372,7 @@ final class TenantUserInputSessionSupport {
         String ociCfgId = TenantUserManagementHandler.getOciCfgId(chatId);
         TenantInfoRsp.TenantUserInfo user = TenantUserManagementHandler.getCachedUser(chatId, userIndex);
         if (ociCfgId == null || user == null) {
-            return new TenantUserManagementHandler().buildEditMessage(callbackQuery, "❌ 用户不存在或上下文已失效，请重新打开用户列表");
+            return TenantUserManagementHandler.buildTenantEditMessage(callbackQuery, "❌ 用户不存在或上下文已失效，请重新打开用户列表");
         }
 
         ConfigSessionStorage configStorage = ConfigSessionStorage.getInstance();
@@ -370,7 +383,7 @@ final class TenantUserInputSessionSupport {
         state.getData().put("userIndex", userIndex);
         state.getData().put("messageId", callbackQuery.getMessage().getMessageId());
 
-        return new TenantUserManagementHandler().buildEditMessage(
+        return TenantUserManagementHandler.buildTenantEditMessage(
                 callbackQuery,
                 prompt,
                 TenantUserMenuHelper.buildInputMarkup(userIndex)
