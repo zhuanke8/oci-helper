@@ -6,6 +6,8 @@ import com.oracle.bmc.identity.model.DomainSummary;
 import com.oracle.bmc.identity.requests.ListDomainsRequest;
 import com.oracle.bmc.identity.responses.ListDomainsResponse;
 import com.oracle.bmc.identitydomains.IdentityDomainsClient;
+import com.oracle.bmc.identitydomains.model.AuthenticationFactorsRemover;
+import com.oracle.bmc.identitydomains.model.AuthenticationFactorsRemoverUser;
 import com.oracle.bmc.identitydomains.model.NotificationSetting;
 import com.oracle.bmc.identitydomains.model.PasswordPolicies;
 import com.oracle.bmc.identitydomains.model.PasswordPolicy;
@@ -13,6 +15,7 @@ import com.oracle.bmc.identitydomains.model.User;
 import com.oracle.bmc.identitydomains.model.UserEmails;
 import com.oracle.bmc.identitydomains.model.UserPasswordChanger;
 import com.oracle.bmc.identitydomains.model.UserPasswordResetter;
+import com.oracle.bmc.identitydomains.requests.CreateAuthenticationFactorsRemoverRequest;
 import com.oracle.bmc.identitydomains.requests.GetUserRequest;
 import com.oracle.bmc.identitydomains.requests.GetNotificationSettingRequest;
 import com.oracle.bmc.identitydomains.requests.ListPasswordPoliciesRequest;
@@ -49,6 +52,8 @@ public class OciUtils {
             "urn:ietf:params:scim:schemas:oracle:idcs:UserPasswordChanger";
     private static final String USER_PASSWORD_RESETTER_SCHEMA =
             "urn:ietf:params:scim:schemas:oracle:idcs:UserPasswordResetter";
+    private static final String AUTHENTICATION_FACTORS_REMOVER_SCHEMA =
+            "urn:ietf:params:scim:schemas:oracle:idcs:AuthenticationFactorsRemover";
     private static final String NOTIFICATION_SETTINGS_ID = "NotificationSettings";
     private static final Pattern EMAIL_PATTERN = Pattern.compile("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
     private static final UserEmails.Type RECOVERY_EMAIL_TYPE = UserEmails.Type.create("recovery");
@@ -345,6 +350,30 @@ public class OciUtils {
                 .filter(x -> x.getPasswordStrength() == PasswordPolicy.PasswordStrength.Custom)
                 .findAny()
                 .orElse(PasswordPolicy.builder().build());
+    }
+
+    /**
+     * Identity Domains 清除用户 MFA 因子
+     */
+    public static void removeUserMfaFactors(OracleInstanceFetcher fetcher, String userId) {
+        try {
+            IdentityDomainsClient client = prepareIdentityDomainsClient(fetcher);
+            AuthenticationFactorsRemover remover = AuthenticationFactorsRemover.builder()
+                    .schemas(Collections.singletonList(AUTHENTICATION_FACTORS_REMOVER_SCHEMA))
+                    .type(AuthenticationFactorsRemover.Type.Mfa)
+                    .user(AuthenticationFactorsRemoverUser.builder()
+                            .value(userId)
+                            .build())
+                    .build();
+
+            client.createAuthenticationFactorsRemover(
+                    CreateAuthenticationFactorsRemoverRequest.builder()
+                            .authenticationFactorsRemover(remover)
+                            .build()
+            );
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to remove user MFA factors", e);
+        }
     }
 
     /**

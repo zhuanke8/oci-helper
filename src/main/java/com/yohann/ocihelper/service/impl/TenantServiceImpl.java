@@ -163,11 +163,11 @@ public class TenantServiceImpl implements ITenantService {
     public void deleteMfaDevice(UpdateUserBasicParams params) {
         SysUserDTO sysUserDTO = getAuthUser(params.getOciCfgId());
         try (OracleInstanceFetcher fetcher = new OracleInstanceFetcher(sysUserDTO)) {
-            fetcher.deleteAllMfa(params.getUserId());
+            OciUtils.removeUserMfaFactors(fetcher, params.getUserId());
             invalidateTenantCache(params.getOciCfgId());
         } catch (Exception e) {
-            log.error("清除 MFA 设备失败", e);
-            throw new OciException(-1, "清除 MFA 设备失败", e);
+            log.error("清除 MFA 因子失败", e);
+            throw new OciException(-1, "清除 MFA 因子失败", e);
         }
     }
 

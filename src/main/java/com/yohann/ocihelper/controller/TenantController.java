@@ -45,7 +45,7 @@ public class TenantController {
     @RequestMapping("deleteMfaDevice")
     public ResponseData<Void> deleteMfaDevice(@Validated @RequestBody UpdateUserBasicParams params) {
         tenantService.deleteMfaDevice(params);
-        return ResponseData.successData("清除 MFA 设备成功");
+        return ResponseData.successData("清除 MFA 因子成功");
     }
 
     @RequestMapping("deleteApiKey")

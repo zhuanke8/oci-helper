@@ -110,12 +110,15 @@ public final class TenantUserMenuHelper {
         message.append(String.format("描述: %s\n", escapeMarkdown(defaultText(user.getDescription(), "无"))));
         message.append(String.format("创建时间: %s\n", escapeMarkdown(defaultText(user.getTimeCreated(), "未知"))));
         message.append(String.format("最后成功登录: %s\n\n", escapeMarkdown(defaultText(user.getLastSuccessfulLoginTime(), "未知"))));
-        message.append("可执行操作：随机重置密码、指定密码、设置 recovery email、清空 recovery email。");
+        message.append("可执行操作：清除 MFA、随机重置密码、指定密码、设置 recovery email、清空 recovery email。");
         return message.toString();
     }
 
     public static InlineKeyboardMarkup buildUserDetailMarkup(String ociCfgId, int userIndex) {
         List<InlineKeyboardRow> keyboard = new ArrayList<>();
+        keyboard.add(new InlineKeyboardRow(
+                KeyboardBuilder.button("🧹 清除 MFA", "tenant_user_clear_mfa:" + userIndex)
+        ));
         keyboard.add(new InlineKeyboardRow(
                 KeyboardBuilder.button("🎲 随机重置密码", "tenant_user_reset_password:" + userIndex),
                 KeyboardBuilder.button("🔐 指定密码", "tenant_user_prompt_change_password:" + userIndex)

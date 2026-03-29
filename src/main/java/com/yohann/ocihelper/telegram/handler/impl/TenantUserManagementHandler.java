@@ -4,6 +4,7 @@ import cn.hutool.core.collection.CollectionUtil;
 import cn.hutool.extra.spring.SpringUtil;
 import com.yohann.ocihelper.bean.params.oci.tenant.GetTenantInfoParams;
 import com.yohann.ocihelper.bean.params.oci.tenant.ResetUserPasswordParams;
+import com.yohann.ocihelper.bean.params.oci.tenant.UpdateUserBasicParams;
 import com.yohann.ocihelper.bean.params.oci.tenant.UpdateUserRecoveryEmailParams;
 import com.yohann.ocihelper.bean.response.oci.tenant.TenantInfoRsp;
 import com.yohann.ocihelper.service.ITenantService;
@@ -328,6 +329,57 @@ class TenantUserClearRecoveryEmailHandler extends AbstractCallbackHandler {
     @Override
     public String getCallbackPattern() {
         return "tenant_user_clear_recovery_email:";
+    }
+}
+
+@Slf4j
+@Component
+class TenantUserClearMfaHandler extends AbstractCallbackHandler {
+
+    @Override
+    public BotApiMethod<? extends Serializable> handle(CallbackQuery callbackQuery, TelegramClient telegramClient) {
+        int userIndex = Integer.parseInt(callbackQuery.getData().split(":", 2)[1]);
+        long chatId = callbackQuery.getMessage().getChatId();
+        String ociCfgId = TenantUserManagementHandler.getOciCfgId(chatId);
+        TenantInfoRsp.TenantUserInfo user = TenantUserManagementHandler.getCachedUser(chatId, userIndex);
+
+        if (ociCfgId == null || user == null) {
+            return buildEditMessage(callbackQuery, "❌ 用户不存在或上下文已失效，请重新打开用户列表");
+        }
+        if (!Boolean.TRUE.equals(user.getIsMfaActivated())) {
+            return buildEditMessage(
+                    callbackQuery,
+                    TenantUserMenuHelper.buildUserDetailText(user, userIndex, "ℹ️ 当前用户未启用 MFA"),
+                    TenantUserMenuHelper.buildUserDetailMarkup(ociCfgId, userIndex)
+            );
+        }
+
+        try {
+            ITenantService tenantService = SpringUtil.getBean(ITenantService.class);
+            UpdateUserBasicParams params = new UpdateUserBasicParams();
+            params.setOciCfgId(ociCfgId);
+            params.setUserId(user.getId());
+            tenantService.deleteMfaDevice(params);
+            user.setIsMfaActivated(Boolean.FALSE);
+
+            return buildEditMessage(
+                    callbackQuery,
+                    TenantUserMenuHelper.buildUserDetailText(user, userIndex, "✅ 已清除该用户 MFA 因子"),
+                    TenantUserMenuHelper.buildUserDetailMarkup(ociCfgId, userIndex)
+            );
+        } catch (Exception e) {
+            log.error("Failed to clear tenant user MFA, ociCfgId={}, userId={}", ociCfgId, user.getId(), e);
+            return buildEditMessage(
+                    callbackQuery,
+                    TenantUserMenuHelper.buildUserDetailText(user, userIndex, "❌ 清除 MFA 失败：" + e.getMessage()),
+                    TenantUserMenuHelper.buildUserDetailMarkup(ociCfgId, userIndex)
+            );
+        }
+    }
+
+    @Override
+    public String getCallbackPattern() {
+        return "tenant_user_clear_mfa:";
     }
 }
 
