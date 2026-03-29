@@ -627,23 +627,8 @@ class TenantUserPromptCreateDomainAdminHandler extends AbstractCallbackHandler {
     public BotApiMethod<? extends Serializable> handle(CallbackQuery callbackQuery, TelegramClient telegramClient) {
         long chatId = callbackQuery.getMessage().getChatId();
         String ociCfgId = TenantUserManagementHandler.getOciCfgId(chatId);
-        IdentityDomainRsp selectedDomain = TenantUserManagementHandler.getSelectedDomain(chatId);
         if (ociCfgId == null) {
             return buildEditMessage(callbackQuery, "❌ 用户上下文已失效，请重新进入配置操作");
-        }
-        if (selectedDomain == null) {
-            return buildEditMessage(
-                    callbackQuery,
-                    "❌ 请先从 Identity Domains 选择一个域，再创建域管理员用户",
-                    TenantUserMenuHelper.buildBackToListMarkup(ociCfgId)
-            );
-        }
-        if (Boolean.TRUE.equals(selectedDomain.getDefaultDomain())) {
-            return buildEditMessage(
-                    callbackQuery,
-                    "❌ 仅支持在非 Default 域中创建域管理员用户",
-                    TenantUserMenuHelper.buildBackToListMarkup(ociCfgId)
-            );
         }
 
         return TenantUserInputSessionSupport.startCreateDomainAdminSession(
@@ -801,15 +786,8 @@ final class TenantUserInputSessionSupport {
         long chatId = callbackQuery.getMessage().getChatId();
         String ociCfgId = TenantUserManagementHandler.getOciCfgId(chatId);
         IdentityDomainRsp selectedDomain = TenantUserManagementHandler.getSelectedDomain(chatId);
-        if (ociCfgId == null || selectedDomain == null) {
-            return TenantUserManagementHandler.buildTenantEditMessage(callbackQuery, "❌ 域上下文已失效，请重新打开用户列表");
-        }
-        if (Boolean.TRUE.equals(selectedDomain.getDefaultDomain())) {
-            return TenantUserManagementHandler.buildTenantEditMessage(
-                    callbackQuery,
-                    "❌ 仅支持在非 Default 域中创建域管理员用户",
-                    TenantUserMenuHelper.buildBackToListMarkup(ociCfgId)
-            );
+        if (ociCfgId == null) {
+            return TenantUserManagementHandler.buildTenantEditMessage(callbackQuery, "❌ 用户上下文已失效，请重新打开用户列表");
         }
 
         ConfigSessionStorage configStorage = ConfigSessionStorage.getInstance();
@@ -817,9 +795,11 @@ final class TenantUserInputSessionSupport {
         ConfigSessionStorage.SessionState state = configStorage.getSessionState(chatId);
         state.getData().put("ociCfgId", ociCfgId);
         state.getData().put("messageId", callbackQuery.getMessage().getMessageId());
-        state.getData().put("domainId", selectedDomain.getId());
-        state.getData().put("domainName", selectedDomain.getDisplayName());
-        state.getData().put("domainUrl", selectedDomain.getUrl());
+        if (selectedDomain != null) {
+            state.getData().put("domainId", selectedDomain.getId());
+            state.getData().put("domainName", selectedDomain.getDisplayName());
+            state.getData().put("domainUrl", selectedDomain.getUrl());
+        }
         state.getData().put("step", "email");
 
         return TenantUserManagementHandler.buildTenantEditMessage(

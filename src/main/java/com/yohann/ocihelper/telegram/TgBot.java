@@ -1119,19 +1119,6 @@ public class TgBot implements LongPollingSingleThreadUpdateConsumer {
         String step = getSessionString(state, "step");
         String ociCfgId = getSessionString(state, "ociCfgId");
         Integer messageId = getSessionMessageId(state);
-        com.yohann.ocihelper.bean.response.oci.tenant.IdentityDomainRsp selectedDomain =
-                com.yohann.ocihelper.telegram.storage.IdentityDomainSelectionStorage.getInstance().getSelectedDomain(chatId);
-
-        if (selectedDomain == null || Boolean.TRUE.equals(selectedDomain.getDefaultDomain())) {
-            configStorage.clearSession(chatId);
-            editOrSendMessage(
-                    chatId,
-                    messageId,
-                    "❌ 仅支持在非 Default 域中创建域管理员用户",
-                    TenantUserMenuHelper.buildBackToListMarkup(ociCfgId)
-            );
-            return;
-        }
 
         if ("email".equals(step) || step == null) {
             String normalizedEmail = normalizedInput.toLowerCase();

@@ -16,7 +16,6 @@ public class CreateIdentityDomainAdminUserParams {
     private String domainId;
     private String domainName;
 
-    @NotBlank(message = "domainUrl不能为空")
     private String domainUrl;
 
     @NotBlank(message = "userName不能为空")

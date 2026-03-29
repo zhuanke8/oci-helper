@@ -96,12 +96,9 @@ public final class TenantUserMenuHelper {
         keyboard.add(new InlineKeyboardRow(
                 KeyboardBuilder.button("🔄 刷新用户列表", "refresh_tenant_users")
         ));
-        IdentityDomainRsp selectedDomain = IdentityDomainSelectionStorage.getInstance().getSelectedDomain(chatId);
-        if (canCreateDomainAdmin(selectedDomain)) {
-            keyboard.add(new InlineKeyboardRow(
-                    KeyboardBuilder.button("➕ 新建域管理员", "tenant_user_prompt_create_domain_admin")
-            ));
-        }
+        keyboard.add(new InlineKeyboardRow(
+                KeyboardBuilder.button("➕ 新建域管理员", "tenant_user_prompt_create_domain_admin")
+        ));
         keyboard.add(new InlineKeyboardRow(
                 KeyboardBuilder.button(
                         selectedDomain == null ? "◀️ 返回配置操作" : "◀️ 返回域列表",
@@ -173,11 +170,9 @@ public final class TenantUserMenuHelper {
     public static InlineKeyboardMarkup buildEmptyUserListMarkup(long chatId, String ociCfgId) {
         List<InlineKeyboardRow> keyboard = new ArrayList<>();
         IdentityDomainRsp selectedDomain = IdentityDomainSelectionStorage.getInstance().getSelectedDomain(chatId);
-        if (canCreateDomainAdmin(selectedDomain)) {
-            keyboard.add(new InlineKeyboardRow(
-                    KeyboardBuilder.button("➕ 新建域管理员", "tenant_user_prompt_create_domain_admin")
-            ));
-        }
+        keyboard.add(new InlineKeyboardRow(
+                KeyboardBuilder.button("➕ 新建域管理员", "tenant_user_prompt_create_domain_admin")
+        ));
         keyboard.add(new InlineKeyboardRow(
                 KeyboardBuilder.button(
                         selectedDomain == null ? "◀️ 返回配置操作" : "◀️ 返回域列表",
@@ -232,10 +227,6 @@ public final class TenantUserMenuHelper {
 
     private static String defaultText(String value, String defaultValue) {
         return StringUtils.isBlank(value) ? defaultValue : value;
-    }
-
-    private static boolean canCreateDomainAdmin(IdentityDomainRsp selectedDomain) {
-        return selectedDomain != null && !Boolean.TRUE.equals(selectedDomain.getDefaultDomain());
     }
 
     public static String escapeMarkdown(String text) {
