@@ -72,7 +72,7 @@ public class SelectConfigHandler extends AbstractCallbackHandler {
         keyboard.add(new InlineKeyboardRow(
                 KeyboardBuilder.button(
                         "👥 租户用户管理",
-                        "tenant_user_management_default:" + userId
+                        "tumd:" + userId
                 ),
                 KeyboardBuilder.button(
                         "🌐 Identity Domains",

@@ -304,7 +304,7 @@ class TenantUserManagementDefaultHandler extends AbstractCallbackHandler {
 
     @Override
     public String getCallbackPattern() {
-        return "tenant_user_management_default:";
+        return "tumd:";
     }
 }
 

@@ -91,7 +91,7 @@ public final class IdentityDomainMenuHelper {
         List<InlineKeyboardRow> keyboard = new ArrayList<>();
         if (Boolean.TRUE.equals(domain.getDefaultDomain())) {
             keyboard.add(new InlineKeyboardRow(
-                    KeyboardBuilder.button("👥 默认域用户管理", "tenant_user_management_default:" + ociCfgId)
+                    KeyboardBuilder.button("👥 默认域用户管理", "tumd:" + ociCfgId)
             ));
         } else if (isActive(domain)) {
             keyboard.add(new InlineKeyboardRow(
