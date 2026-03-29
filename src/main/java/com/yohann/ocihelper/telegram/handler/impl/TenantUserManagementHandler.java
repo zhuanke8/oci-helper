@@ -8,12 +8,14 @@ import com.yohann.ocihelper.bean.params.oci.tenant.GetTenantInfoParams;
 import com.yohann.ocihelper.bean.params.oci.tenant.ResetUserPasswordParams;
 import com.yohann.ocihelper.bean.params.oci.tenant.UpdateUserBasicParams;
 import com.yohann.ocihelper.bean.params.oci.tenant.UpdateUserRecoveryEmailParams;
+import com.yohann.ocihelper.bean.response.oci.tenant.IdentityDomainRsp;
 import com.yohann.ocihelper.bean.response.oci.tenant.TenantInfoRsp;
 import com.yohann.ocihelper.config.OracleInstanceFetcher;
 import com.yohann.ocihelper.service.ISysService;
 import com.yohann.ocihelper.service.ITenantService;
 import com.yohann.ocihelper.telegram.handler.AbstractCallbackHandler;
 import com.yohann.ocihelper.telegram.storage.ConfigSessionStorage;
+import com.yohann.ocihelper.telegram.storage.IdentityDomainSelectionStorage;
 import com.yohann.ocihelper.telegram.storage.PaginationStorage;
 import com.yohann.ocihelper.telegram.storage.TenantUserSelectionStorage;
 import com.yohann.ocihelper.telegram.utils.TenantUserMenuHelper;
@@ -65,7 +67,7 @@ public class TenantUserManagementHandler extends AbstractCallbackHandler {
                 return buildTenantEditMessage(
                         callbackQuery,
                         "❌ 当前租户下暂无用户",
-                        TenantUserMenuHelper.buildBackToConfigMarkup(ociCfgId)
+                        TenantUserMenuHelper.buildBackToConfigMarkup(chatId, ociCfgId)
                 );
             }
 
@@ -80,7 +82,7 @@ public class TenantUserManagementHandler extends AbstractCallbackHandler {
             return buildTenantEditMessage(
                     callbackQuery,
                     "❌ 获取租户用户失败：" + e.getMessage(),
-                    TenantUserMenuHelper.buildBackToConfigMarkup(ociCfgId)
+                    TenantUserMenuHelper.buildBackToConfigMarkup(chatId, ociCfgId)
             );
         }
     }
@@ -90,6 +92,12 @@ public class TenantUserManagementHandler extends AbstractCallbackHandler {
         GetTenantInfoParams params = new GetTenantInfoParams();
         params.setOciCfgId(ociCfgId);
         params.setCleanReLaunch(false);
+        IdentityDomainRsp selectedDomain = getSelectedDomain(chatId);
+        if (selectedDomain != null) {
+            params.setDomainId(selectedDomain.getId());
+            params.setDomainName(selectedDomain.getDisplayName());
+            params.setDomainUrl(selectedDomain.getUrl());
+        }
 
         List<TenantInfoRsp.TenantUserInfo> users = tenantService.tenantInfo(params).getUserList();
         users = users == null ? Collections.emptyList() : users;
@@ -118,19 +126,66 @@ public class TenantUserManagementHandler extends AbstractCallbackHandler {
         return TenantUserSelectionStorage.getInstance().getConfigContext(chatId);
     }
 
-    static String buildDiagnosisText(String ociCfgId, TenantInfoRsp.TenantUserInfo cachedUser) {
+    static IdentityDomainRsp getSelectedDomain(long chatId) {
+        return IdentityDomainSelectionStorage.getInstance().getSelectedDomain(chatId);
+    }
+
+    static void applySelectedDomainContext(long chatId, UpdateUserBasicParams params) {
+        if (params == null) {
+            return;
+        }
+        IdentityDomainRsp selectedDomain = getSelectedDomain(chatId);
+        if (selectedDomain == null) {
+            return;
+        }
+        params.setDomainId(selectedDomain.getId());
+        params.setDomainName(selectedDomain.getDisplayName());
+        params.setDomainUrl(selectedDomain.getUrl());
+    }
+
+    static boolean isSelfTargetUser(long chatId, String ociCfgId, TenantInfoRsp.TenantUserInfo cachedUser) {
         ISysService sysService = SpringUtil.getBean(ISysService.class);
         SysUserDTO authUser = sysService.getOciUser(ociCfgId);
+        return isSelfTargetUser(getSelectedDomain(chatId), authUser, null, cachedUser);
+    }
+
+    static boolean isSelfTargetUser(IdentityDomainRsp selectedDomain,
+                                    SysUserDTO authUser,
+                                    String domainUserOcid,
+                                    TenantInfoRsp.TenantUserInfo cachedUser) {
+        if (selectedDomain != null && !Boolean.TRUE.equals(selectedDomain.getDefaultDomain())) {
+            return false;
+        }
+        String authUserId = authUser == null || authUser.getOciCfg() == null ? null : authUser.getOciCfg().getUserId();
+        if (authUserId == null || authUserId.isBlank()) {
+            return false;
+        }
+        if (cachedUser != null && authUserId.equals(cachedUser.getId())) {
+            return true;
+        }
+        if (cachedUser != null && authUserId.equals(cachedUser.getOcid())) {
+            return true;
+        }
+        return domainUserOcid != null && !domainUserOcid.isBlank() && authUserId.equals(domainUserOcid);
+    }
+
+    static String buildDiagnosisText(long chatId, String ociCfgId, TenantInfoRsp.TenantUserInfo cachedUser) {
+        ISysService sysService = SpringUtil.getBean(ISysService.class);
+        SysUserDTO authUser = sysService.getOciUser(ociCfgId);
+        IdentityDomainRsp selectedDomain = getSelectedDomain(chatId);
 
         String endpoint = "未获取";
         String domainUserId = "未获取";
-        String domainUserOcid = defaultValue(cachedUser.getId(), "未获取");
+        String domainUserOcid = defaultValue(cachedUser.getOcid(), defaultValue(cachedUser.getId(), "未获取"));
         String domainDisplayName = defaultValue(cachedUser.getName(), "未知");
         String domainEmail = defaultValue(cachedUser.getEmail(), "未设置");
         String domainError = null;
 
         try (OracleInstanceFetcher fetcher = new OracleInstanceFetcher(authUser)) {
-            endpoint = defaultValue(OciUtils.getDomain(fetcher.getIdentityClient(), authUser.getOciCfg().getTenantId()), "未获取");
+            endpoint = defaultValue(
+                    selectedDomain != null ? selectedDomain.getUrl() : OciUtils.getDomain(fetcher.getIdentityClient(), authUser.getOciCfg().getTenantId()),
+                    "未获取"
+            );
             if (!"未获取".equals(endpoint)) {
                 fetcher.getIdentityDomainsClient().setEndpoint(endpoint);
                 com.oracle.bmc.identitydomains.model.User domainUser = fetcher.getIdentityDomainsClient()
@@ -160,6 +215,12 @@ public class TenantUserManagementHandler extends AbstractCallbackHandler {
         message.append(String.format("私钥文件: %s\n\n", md(getFileName(authUser.getOciCfg().getPrivateKeyPath()))));
 
         message.append("Identity Domains:\n");
+        if (selectedDomain != null) {
+            message.append(String.format("当前域: %s\n", md(defaultValue(selectedDomain.getDisplayName(), "未知"))));
+            message.append(String.format("当前域 ID: %s\n", md(defaultValue(selectedDomain.getId(), "未知"))));
+            message.append(String.format("当前域类型: %s\n", md(defaultValue(selectedDomain.getType(), "未知"))));
+            message.append(String.format("当前域状态: %s\n", md(defaultValue(selectedDomain.getLifecycleState(), "未知"))));
+        }
         message.append(String.format("Endpoint: %s\n", md(endpoint)));
         message.append(String.format("目标用户请求 userId: %s\n", md(defaultValue(cachedUser.getId(), "未知"))));
         message.append(String.format("目标用户 domain id: %s\n", md(domainUserId)));
@@ -171,15 +232,28 @@ public class TenantUserManagementHandler extends AbstractCallbackHandler {
             message.append(String.format("域信息补充: %s\n", md(domainError)));
         }
 
+        boolean selfTarget = isSelfTargetUser(selectedDomain, authUser, domainUserOcid, cachedUser);
         message.append("\n权限判断:\n");
-        message.append("1. 指定密码 / 随机重置密码 报 401:\n");
-        message.append("需要 Help Desk Administrator 或更高角色。\n");
-        message.append("2. 设置 / 清空 recovery email 报 401:\n");
-        message.append("需要 Users | ALL，通常是 User Manager、User Administrator 或 Identity Domain Administrator。\n");
-        message.append("3. 清除 MFA 报 401:\n");
-        message.append("需要 AuthenticationFactorsRemover | POST，Help Desk Administrator 或更高角色可执行。\n");
-        message.append("4. 如果这三类都报 401:\n");
-        message.append("当前配置账号大概率只有 Security Administrator，或者根本没有分配到目标 Identity Domain 的管理员角色。");
+        if (selfTarget) {
+            message.append("当前目标就是签名用户本人，管理员接口报 401 并不代表签名错误，而是接口类型选错或缺少本人当前密码。\n");
+            message.append("1. 随机重置密码 报 401:\n");
+            message.append("这条仍走管理员重置接口，需要 Help Desk Administrator 或更高角色。\n");
+            message.append("2. 指定密码:\n");
+            message.append("本人账号走 MePasswordChanger，自助改密需要 oldPassword。当前 TG 已改为两段式输入：旧密码 -> 新密码。\n");
+            message.append("3. 设置 / 清空 recovery email:\n");
+            message.append("本人账号走 Me PUT。官方文档要求修改恢复相关属性时提供 currentPassword。当前 TG 已改为两段式输入：当前密码 -> 新 recovery email；清空时为当前密码 -> 执行清空。\n");
+            message.append("4. 清除 MFA:\n");
+            message.append("本人账号应走 MyAuthenticationFactorsRemover，自助路径不依赖 Help Desk Administrator。若仍失败，再看域策略或账号状态。");
+        } else {
+            message.append("1. 指定密码 / 随机重置密码 报 401:\n");
+            message.append("需要 Help Desk Administrator 或更高角色。\n");
+            message.append("2. 设置 / 清空 recovery email 报 401:\n");
+            message.append("需要 Users | ALL，通常是 User Manager、User Administrator 或 Identity Domain Administrator。\n");
+            message.append("3. 清除 MFA 报 401:\n");
+            message.append("需要 AuthenticationFactorsRemover | POST，Help Desk Administrator 或更高角色可执行。\n");
+            message.append("4. 如果这三类都报 401:\n");
+            message.append("当前配置账号大概率只有 Security Administrator，或者根本没有分配到目标 Identity Domain 的管理员角色。");
+        }
         return message.toString();
     }
 
@@ -211,6 +285,26 @@ public class TenantUserManagementHandler extends AbstractCallbackHandler {
 
     static BotApiMethod<? extends Serializable> buildTenantEditMessage(CallbackQuery callbackQuery, String text) {
         return MESSAGE_HELPER.buildEditMessage(callbackQuery, text);
+    }
+}
+
+@Slf4j
+@Component
+class TenantUserManagementDefaultHandler extends AbstractCallbackHandler {
+
+    @Override
+    public BotApiMethod<? extends Serializable> handle(CallbackQuery callbackQuery, TelegramClient telegramClient) {
+        String ociCfgId = callbackQuery.getData().split(":", 2)[1];
+        long chatId = callbackQuery.getMessage().getChatId();
+
+        IdentityDomainSelectionStorage.getInstance().setSelectedDomain(chatId, null);
+        PaginationStorage.getInstance().resetPage(chatId, TenantUserMenuHelper.getPageType(ociCfgId));
+        return TenantUserManagementHandler.renderUserList(callbackQuery, chatId, ociCfgId, true);
+    }
+
+    @Override
+    public String getCallbackPattern() {
+        return "tenant_user_management_default:";
     }
 }
 
@@ -318,6 +412,7 @@ class TenantUserResetPasswordHandler extends AbstractCallbackHandler {
             params.setUserId(user.getId());
             params.setBypassNotification(Boolean.FALSE);
             params.setUserFlowControlledByExternalClient(Boolean.FALSE);
+            TenantUserManagementHandler.applySelectedDomainContext(chatId, params);
             tenantService.resetPassword(params);
 
             return buildEditMessage(
@@ -347,6 +442,26 @@ class TenantUserPromptChangePasswordHandler extends AbstractCallbackHandler {
 
     @Override
     public BotApiMethod<? extends Serializable> handle(CallbackQuery callbackQuery, TelegramClient telegramClient) {
+        int userIndex = Integer.parseInt(callbackQuery.getData().split(":", 2)[1]);
+        long chatId = callbackQuery.getMessage().getChatId();
+        String ociCfgId = TenantUserManagementHandler.getOciCfgId(chatId);
+        TenantInfoRsp.TenantUserInfo user = TenantUserManagementHandler.getCachedUser(chatId, userIndex);
+        if (ociCfgId == null || user == null) {
+            return buildEditMessage(callbackQuery, "❌ 用户不存在或上下文已失效，请重新打开用户列表");
+        }
+        if (TenantUserManagementHandler.isSelfTargetUser(chatId, ociCfgId, user)) {
+            BotApiMethod<? extends Serializable> promptMessage = TenantUserInputSessionSupport.startInputSession(
+                    callbackQuery,
+                    ConfigSessionStorage.SessionType.TENANT_USER_CHANGE_PASSWORD,
+                    "【指定密码】\n\n当前目标是签名用户本人。\n\n第 1 步：请输入当前登录密码。\n\n发送 /cancel 可取消当前输入。"
+            );
+            ConfigSessionStorage.SessionState state = ConfigSessionStorage.getInstance().getSessionState(chatId);
+            if (state != null) {
+                state.getData().put("selfService", Boolean.TRUE);
+                state.getData().put("step", "old_password");
+            }
+            return promptMessage;
+        }
         return TenantUserInputSessionSupport.startInputSession(
                 callbackQuery,
                 ConfigSessionStorage.SessionType.TENANT_USER_CHANGE_PASSWORD,
@@ -366,6 +481,27 @@ class TenantUserPromptRecoveryEmailHandler extends AbstractCallbackHandler {
 
     @Override
     public BotApiMethod<? extends Serializable> handle(CallbackQuery callbackQuery, TelegramClient telegramClient) {
+        int userIndex = Integer.parseInt(callbackQuery.getData().split(":", 2)[1]);
+        long chatId = callbackQuery.getMessage().getChatId();
+        String ociCfgId = TenantUserManagementHandler.getOciCfgId(chatId);
+        TenantInfoRsp.TenantUserInfo user = TenantUserManagementHandler.getCachedUser(chatId, userIndex);
+        if (ociCfgId == null || user == null) {
+            return buildEditMessage(callbackQuery, "❌ 用户不存在或上下文已失效，请重新打开用户列表");
+        }
+        if (TenantUserManagementHandler.isSelfTargetUser(chatId, ociCfgId, user)) {
+            BotApiMethod<? extends Serializable> promptMessage = TenantUserInputSessionSupport.startInputSession(
+                    callbackQuery,
+                    ConfigSessionStorage.SessionType.TENANT_USER_RECOVERY_EMAIL,
+                    "【设置 recovery email】\n\n当前目标是签名用户本人。\n\n第 1 步：请输入当前登录密码。\n\n发送 /cancel 可取消当前输入。"
+            );
+            ConfigSessionStorage.SessionState state = ConfigSessionStorage.getInstance().getSessionState(chatId);
+            if (state != null) {
+                state.getData().put("selfService", Boolean.TRUE);
+                state.getData().put("step", "current_password");
+                state.getData().put("action", "set");
+            }
+            return promptMessage;
+        }
         return TenantUserInputSessionSupport.startInputSession(
                 callbackQuery,
                 ConfigSessionStorage.SessionType.TENANT_USER_RECOVERY_EMAIL,
@@ -393,6 +529,20 @@ class TenantUserClearRecoveryEmailHandler extends AbstractCallbackHandler {
         if (ociCfgId == null || user == null) {
             return buildEditMessage(callbackQuery, "❌ 用户不存在或上下文已失效，请重新打开用户列表");
         }
+        if (TenantUserManagementHandler.isSelfTargetUser(chatId, ociCfgId, user)) {
+            BotApiMethod<? extends Serializable> promptMessage = TenantUserInputSessionSupport.startInputSession(
+                    callbackQuery,
+                    ConfigSessionStorage.SessionType.TENANT_USER_RECOVERY_EMAIL,
+                    "【清空 recovery email】\n\n当前目标是签名用户本人。\n\n请输入当前登录密码后执行清空。\n\n发送 /cancel 可取消当前输入。"
+            );
+            ConfigSessionStorage.SessionState state = ConfigSessionStorage.getInstance().getSessionState(chatId);
+            if (state != null) {
+                state.getData().put("selfService", Boolean.TRUE);
+                state.getData().put("step", "current_password");
+                state.getData().put("action", "clear");
+            }
+            return promptMessage;
+        }
 
         try {
             ITenantService tenantService = SpringUtil.getBean(ITenantService.class);
@@ -400,6 +550,7 @@ class TenantUserClearRecoveryEmailHandler extends AbstractCallbackHandler {
             params.setOciCfgId(ociCfgId);
             params.setUserId(user.getId());
             params.setRecoveryEmail(null);
+            TenantUserManagementHandler.applySelectedDomainContext(chatId, params);
             tenantService.updateRecoveryEmail(params);
 
             return buildEditMessage(
@@ -441,7 +592,7 @@ class TenantUserDiagnosisHandler extends AbstractCallbackHandler {
         try {
             return buildEditMessage(
                     callbackQuery,
-                    TenantUserManagementHandler.buildDiagnosisText(ociCfgId, user),
+                    TenantUserManagementHandler.buildDiagnosisText(chatId, ociCfgId, user),
                     TenantUserMenuHelper.buildDiagnosisMarkup(ociCfgId, userIndex)
             );
         } catch (Exception e) {
@@ -487,6 +638,7 @@ class TenantUserClearMfaHandler extends AbstractCallbackHandler {
             UpdateUserBasicParams params = new UpdateUserBasicParams();
             params.setOciCfgId(ociCfgId);
             params.setUserId(user.getId());
+            TenantUserManagementHandler.applySelectedDomainContext(chatId, params);
             tenantService.deleteMfaDevice(params);
             user.setIsMfaActivated(Boolean.FALSE);
 
@@ -562,6 +714,12 @@ final class TenantUserInputSessionSupport {
         state.getData().put("userId", user.getId());
         state.getData().put("userIndex", userIndex);
         state.getData().put("messageId", callbackQuery.getMessage().getMessageId());
+        IdentityDomainRsp selectedDomain = TenantUserManagementHandler.getSelectedDomain(chatId);
+        if (selectedDomain != null) {
+            state.getData().put("domainId", selectedDomain.getId());
+            state.getData().put("domainName", selectedDomain.getDisplayName());
+            state.getData().put("domainUrl", selectedDomain.getUrl());
+        }
 
         return TenantUserManagementHandler.buildTenantEditMessage(
                 callbackQuery,

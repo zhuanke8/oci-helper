@@ -899,6 +899,24 @@ public class TgBot implements LongPollingSingleThreadUpdateConsumer {
         return Integer.parseInt(String.valueOf(messageId));
     }
 
+    private String getSessionString(ConfigSessionStorage.SessionState state, String key) {
+        if (state == null || state.getData().get(key) == null) {
+            return null;
+        }
+        return String.valueOf(state.getData().get(key));
+    }
+
+    private boolean getSessionBoolean(ConfigSessionStorage.SessionState state, String key) {
+        if (state == null) {
+            return false;
+        }
+        Object value = state.getData().get(key);
+        if (value instanceof Boolean) {
+            return (Boolean) value;
+        }
+        return value != null && Boolean.parseBoolean(String.valueOf(value));
+    }
+
     private void handleTenantUserChangePasswordInput(long chatId, String password) {
         ConfigSessionStorage configStorage = ConfigSessionStorage.getInstance();
         ConfigSessionStorage.SessionState state = configStorage.getSessionState(chatId);
@@ -908,15 +926,34 @@ public class TgBot implements LongPollingSingleThreadUpdateConsumer {
         }
 
         String normalizedPassword = password == null ? "" : password.trim();
+        boolean selfService = getSessionBoolean(state, "selfService");
+        String step = getSessionString(state, "step");
         if (normalizedPassword.isEmpty()) {
-            sendMessage(chatId, "❌ 密码不能为空，请重新输入或发送 /cancel 取消");
+            sendMessage(
+                    chatId,
+                    selfService && ("old_password".equals(step) || step == null)
+                            ? "❌ 当前密码不能为空，请重新输入或发送 /cancel 取消"
+                            : "❌ 密码不能为空，请重新输入或发送 /cancel 取消"
+            );
             return;
         }
 
-        String ociCfgId = String.valueOf(state.getData().get("ociCfgId"));
-        String userId = String.valueOf(state.getData().get("userId"));
-        int userIndex = Integer.parseInt(String.valueOf(state.getData().get("userIndex")));
+        String ociCfgId = getSessionString(state, "ociCfgId");
+        String userId = getSessionString(state, "userId");
+        int userIndex = Integer.parseInt(getSessionString(state, "userIndex"));
         Integer messageId = getSessionMessageId(state);
+
+        if (selfService && ("old_password".equals(step) || step == null)) {
+            state.getData().put("oldPassword", normalizedPassword);
+            state.getData().put("step", "new_password");
+            editOrSendMessage(
+                    chatId,
+                    messageId,
+                    "【指定密码】\n\n当前目标是签名用户本人。\n\n第 2 步：请输入新的登录密码。\n\n发送 /cancel 可取消当前输入。",
+                    TenantUserMenuHelper.buildInputMarkup(userIndex)
+            );
+            return;
+        }
 
         try {
             com.yohann.ocihelper.service.ITenantService tenantService =
@@ -927,6 +964,12 @@ public class TgBot implements LongPollingSingleThreadUpdateConsumer {
             params.setUserId(userId);
             params.setPassword(normalizedPassword);
             params.setBypassNotification(Boolean.FALSE);
+            params.setDomainId(getSessionString(state, "domainId"));
+            params.setDomainName(getSessionString(state, "domainName"));
+            params.setDomainUrl(getSessionString(state, "domainUrl"));
+            if (selfService) {
+                params.setOldPassword(getSessionString(state, "oldPassword"));
+            }
             tenantService.updateUserPassword(params);
 
             TenantUserSelectionStorage userStorage = TenantUserSelectionStorage.getInstance();
@@ -963,16 +1006,55 @@ public class TgBot implements LongPollingSingleThreadUpdateConsumer {
             return;
         }
 
-        String normalizedEmail = recoveryEmail == null ? "" : recoveryEmail.trim().toLowerCase();
+        String normalizedInput = recoveryEmail == null ? "" : recoveryEmail.trim();
+        String ociCfgId = getSessionString(state, "ociCfgId");
+        String userId = getSessionString(state, "userId");
+        int userIndex = Integer.parseInt(getSessionString(state, "userIndex"));
+        Integer messageId = getSessionMessageId(state);
+        boolean selfService = getSessionBoolean(state, "selfService");
+        String step = getSessionString(state, "step");
+        String action = getSessionString(state, "action");
+
+        if (selfService && ("current_password".equals(step) || step == null)) {
+            if (normalizedInput.isEmpty()) {
+                sendMessage(chatId, "❌ 当前密码不能为空，请重新输入或发送 /cancel 取消");
+                return;
+            }
+
+            state.getData().put("currentPassword", normalizedInput);
+            if ("clear".equals(action)) {
+                executeRecoveryEmailUpdate(chatId, configStorage, state, ociCfgId, userId, userIndex, messageId, null);
+                return;
+            }
+
+            state.getData().put("step", "recovery_email");
+            editOrSendMessage(
+                    chatId,
+                    messageId,
+                    "【设置 recovery email】\n\n当前目标是签名用户本人。\n\n第 2 步：请输入新的恢复邮箱地址。\n\n发送 /cancel 可取消当前输入。",
+                    TenantUserMenuHelper.buildInputMarkup(userIndex)
+            );
+            return;
+        }
+
+        String normalizedEmail = normalizedInput.toLowerCase();
         if (!EMAIL_PATTERN.matcher(normalizedEmail).matches()) {
             sendMessage(chatId, "❌ recovery email 格式不正确，请重新输入标准邮箱地址或发送 /cancel 取消");
             return;
         }
 
-        String ociCfgId = String.valueOf(state.getData().get("ociCfgId"));
-        String userId = String.valueOf(state.getData().get("userId"));
-        int userIndex = Integer.parseInt(String.valueOf(state.getData().get("userIndex")));
-        Integer messageId = getSessionMessageId(state);
+        executeRecoveryEmailUpdate(chatId, configStorage, state, ociCfgId, userId, userIndex, messageId, normalizedEmail);
+    }
+
+    private void executeRecoveryEmailUpdate(long chatId,
+                                            ConfigSessionStorage configStorage,
+                                            ConfigSessionStorage.SessionState state,
+                                            String ociCfgId,
+                                            String userId,
+                                            int userIndex,
+                                            Integer messageId,
+                                            String recoveryEmail) {
+        boolean clearAction = recoveryEmail == null;
 
         try {
             com.yohann.ocihelper.service.ITenantService tenantService =
@@ -981,12 +1063,20 @@ public class TgBot implements LongPollingSingleThreadUpdateConsumer {
                     new com.yohann.ocihelper.bean.params.oci.tenant.UpdateUserRecoveryEmailParams();
             params.setOciCfgId(ociCfgId);
             params.setUserId(userId);
-            params.setRecoveryEmail(normalizedEmail);
+            params.setRecoveryEmail(recoveryEmail);
+            params.setDomainId(getSessionString(state, "domainId"));
+            params.setDomainName(getSessionString(state, "domainName"));
+            params.setDomainUrl(getSessionString(state, "domainUrl"));
+            if (getSessionBoolean(state, "selfService")) {
+                params.setCurrentPassword(getSessionString(state, "currentPassword"));
+            }
             String updatedRecoveryEmail = tenantService.updateRecoveryEmail(params);
 
             TenantUserSelectionStorage userStorage = TenantUserSelectionStorage.getInstance();
             com.yohann.ocihelper.bean.response.oci.tenant.TenantInfoRsp.TenantUserInfo user = userStorage.getUserByIndex(chatId, userIndex);
-            String notice = "✅ recovery email 已更新为: " + updatedRecoveryEmail;
+            String notice = clearAction
+                    ? "✅ recovery email 已清空"
+                    : "✅ recovery email 已更新为: " + updatedRecoveryEmail;
             String text = user == null
                     ? notice
                     : TenantUserMenuHelper.buildUserDetailText(user, userIndex, notice);
@@ -1001,8 +1091,12 @@ public class TgBot implements LongPollingSingleThreadUpdateConsumer {
             TenantUserSelectionStorage userStorage = TenantUserSelectionStorage.getInstance();
             com.yohann.ocihelper.bean.response.oci.tenant.TenantInfoRsp.TenantUserInfo user = userStorage.getUserByIndex(chatId, userIndex);
             String text = user == null
-                    ? "❌ 更新 recovery email 失败: " + e.getMessage()
-                    : TenantUserMenuHelper.buildUserDetailText(user, userIndex, "❌ 更新 recovery email 失败: " + e.getMessage());
+                    ? (clearAction ? "❌ 清空 recovery email 失败: " + e.getMessage() : "❌ 更新 recovery email 失败: " + e.getMessage())
+                    : TenantUserMenuHelper.buildUserDetailText(
+                            user,
+                            userIndex,
+                            clearAction ? "❌ 清空 recovery email 失败: " + e.getMessage() : "❌ 更新 recovery email 失败: " + e.getMessage()
+                    );
             InlineKeyboardMarkup markup = user == null
                     ? TenantUserMenuHelper.buildBackToListMarkup(ociCfgId)
                     : TenantUserMenuHelper.buildUserDetailMarkup(ociCfgId, userIndex);

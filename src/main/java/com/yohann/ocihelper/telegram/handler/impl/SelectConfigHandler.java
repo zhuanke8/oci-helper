@@ -5,6 +5,8 @@ import com.yohann.ocihelper.bean.entity.OciUser;
 import com.yohann.ocihelper.service.IOciUserService;
 import com.yohann.ocihelper.telegram.builder.KeyboardBuilder;
 import com.yohann.ocihelper.telegram.handler.AbstractCallbackHandler;
+import com.yohann.ocihelper.telegram.storage.IdentityDomainSelectionStorage;
+import com.yohann.ocihelper.telegram.storage.TenantUserSelectionStorage;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import org.telegram.telegrambots.meta.api.methods.botapimethods.BotApiMethod;
@@ -30,6 +32,7 @@ public class SelectConfigHandler extends AbstractCallbackHandler {
     public BotApiMethod<? extends Serializable> handle(CallbackQuery callbackQuery, TelegramClient telegramClient) {
         String callbackData = callbackQuery.getData();
         String userId = callbackData.split(":")[1];
+        long chatId = callbackQuery.getMessage().getChatId();
         
         IOciUserService userService = SpringUtil.getBean(IOciUserService.class);
         OciUser user = userService.getById(userId);
@@ -41,6 +44,9 @@ public class SelectConfigHandler extends AbstractCallbackHandler {
                     new InlineKeyboardMarkup(KeyboardBuilder.buildMainMenu())
             );
         }
+
+        IdentityDomainSelectionStorage.getInstance().clearAll(chatId);
+        TenantUserSelectionStorage.getInstance().clearAll(chatId);
         
         List<InlineKeyboardRow> keyboard = new ArrayList<>();
         
@@ -66,7 +72,11 @@ public class SelectConfigHandler extends AbstractCallbackHandler {
         keyboard.add(new InlineKeyboardRow(
                 KeyboardBuilder.button(
                         "👥 租户用户管理",
-                        "tenant_user_management:" + userId
+                        "tenant_user_management_default:" + userId
+                ),
+                KeyboardBuilder.button(
+                        "🌐 Identity Domains",
+                        "identity_domain_management:" + userId
                 )
         ));
 

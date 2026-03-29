@@ -1,13 +1,16 @@
 package com.yohann.ocihelper.controller;
 
 import com.yohann.ocihelper.bean.ResponseData;
+import com.yohann.ocihelper.bean.params.oci.tenant.GetIdentityDomainsParams;
 import com.yohann.ocihelper.bean.params.oci.tenant.GetTenantInfoParams;
 import com.yohann.ocihelper.bean.params.oci.tenant.ResetUserPasswordParams;
+import com.yohann.ocihelper.bean.params.oci.tenant.UpdateDomainStateParams;
 import com.yohann.ocihelper.bean.params.oci.tenant.UpdatePwdExpirationPolicyParams;
 import com.yohann.ocihelper.bean.params.oci.tenant.UpdateUserBasicParams;
 import com.yohann.ocihelper.bean.params.oci.tenant.UpdateUserInfoParams;
 import com.yohann.ocihelper.bean.params.oci.tenant.UpdateUserPasswordParams;
 import com.yohann.ocihelper.bean.params.oci.tenant.UpdateUserRecoveryEmailParams;
+import com.yohann.ocihelper.bean.response.oci.tenant.IdentityDomainRsp;
 import com.yohann.ocihelper.bean.response.oci.tenant.PasswordOperationRsp;
 import com.yohann.ocihelper.bean.response.oci.tenant.TenantInfoRsp;
 import com.yohann.ocihelper.service.ITenantService;
@@ -17,6 +20,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import jakarta.annotation.Resource;
+
+import java.util.List;
 
 /**
  * @ClassName TenantController
@@ -34,6 +39,23 @@ public class TenantController {
     @RequestMapping("tenantInfo")
     public ResponseData<TenantInfoRsp> tenantInfo(@Validated @RequestBody GetTenantInfoParams params) {
         return ResponseData.successData(tenantService.tenantInfo(params));
+    }
+
+    @RequestMapping("listIdentityDomains")
+    public ResponseData<List<IdentityDomainRsp>> listIdentityDomains(@Validated @RequestBody GetIdentityDomainsParams params) {
+        return ResponseData.successData(tenantService.listIdentityDomains(params));
+    }
+
+    @RequestMapping("activateDomain")
+    public ResponseData<Void> activateDomain(@Validated @RequestBody UpdateDomainStateParams params) {
+        tenantService.activateDomain(params);
+        return ResponseData.successData("Identity Domain 激活成功");
+    }
+
+    @RequestMapping("deactivateDomain")
+    public ResponseData<Void> deactivateDomain(@Validated @RequestBody UpdateDomainStateParams params) {
+        tenantService.deactivateDomain(params);
+        return ResponseData.successData("Identity Domain 停用成功");
     }
 
     @RequestMapping("deleteUser")

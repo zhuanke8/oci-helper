@@ -23,4 +23,9 @@ public class UpdateUserRecoveryEmailParams extends UpdateUserBasicParams {
             message = "recoveryEmail格式不正确"
     )
     private String recoveryEmail;
+
+    /**
+     * 本人自助修改 recovery email 时必填，对应 Me 扩展字段 currentPassword。
+     */
+    private String currentPassword;
 }

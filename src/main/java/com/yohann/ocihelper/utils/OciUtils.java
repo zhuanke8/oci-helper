@@ -8,6 +8,12 @@ import com.oracle.bmc.identity.responses.ListDomainsResponse;
 import com.oracle.bmc.identitydomains.IdentityDomainsClient;
 import com.oracle.bmc.identitydomains.model.AuthenticationFactorsRemover;
 import com.oracle.bmc.identitydomains.model.AuthenticationFactorsRemoverUser;
+import com.oracle.bmc.identitydomains.model.ExtensionMeUser;
+import com.oracle.bmc.identitydomains.model.Me;
+import com.oracle.bmc.identitydomains.model.MeEmails;
+import com.oracle.bmc.identitydomains.model.MePasswordChanger;
+import com.oracle.bmc.identitydomains.model.MyAuthenticationFactorsRemover;
+import com.oracle.bmc.identitydomains.model.MyAuthenticationFactorsRemoverUser;
 import com.oracle.bmc.identitydomains.model.NotificationSetting;
 import com.oracle.bmc.identitydomains.model.PasswordPolicies;
 import com.oracle.bmc.identitydomains.model.PasswordPolicy;
@@ -16,15 +22,20 @@ import com.oracle.bmc.identitydomains.model.UserEmails;
 import com.oracle.bmc.identitydomains.model.UserPasswordChanger;
 import com.oracle.bmc.identitydomains.model.UserPasswordResetter;
 import com.oracle.bmc.identitydomains.requests.CreateAuthenticationFactorsRemoverRequest;
+import com.oracle.bmc.identitydomains.requests.CreateMyAuthenticationFactorsRemoverRequest;
+import com.oracle.bmc.identitydomains.requests.GetMeRequest;
 import com.oracle.bmc.identitydomains.requests.GetUserRequest;
 import com.oracle.bmc.identitydomains.requests.GetNotificationSettingRequest;
 import com.oracle.bmc.identitydomains.requests.ListPasswordPoliciesRequest;
 import com.oracle.bmc.identitydomains.requests.PutUserRequest;
 import com.oracle.bmc.identitydomains.requests.PutNotificationSettingRequest;
 import com.oracle.bmc.identitydomains.requests.PutPasswordPolicyRequest;
+import com.oracle.bmc.identitydomains.requests.PutMePasswordChangerRequest;
+import com.oracle.bmc.identitydomains.requests.PutMeRequest;
 import com.oracle.bmc.identitydomains.requests.PutUserPasswordChangerRequest;
 import com.oracle.bmc.identitydomains.requests.PutUserPasswordResetterRequest;
 import com.oracle.bmc.identitydomains.responses.ListPasswordPoliciesResponse;
+import com.oracle.bmc.identitydomains.responses.PutMePasswordChangerResponse;
 import com.oracle.bmc.identitydomains.responses.PutPasswordPolicyResponse;
 import com.oracle.bmc.identitydomains.responses.PutUserPasswordChangerResponse;
 import com.oracle.bmc.identitydomains.responses.PutUserPasswordResetterResponse;
@@ -54,9 +65,12 @@ public class OciUtils {
             "urn:ietf:params:scim:schemas:oracle:idcs:UserPasswordResetter";
     private static final String AUTHENTICATION_FACTORS_REMOVER_SCHEMA =
             "urn:ietf:params:scim:schemas:oracle:idcs:AuthenticationFactorsRemover";
+    private static final String ME_PASSWORD_CHANGER_SCHEMA =
+            "urn:ietf:params:scim:schemas:oracle:idcs:MePasswordChanger";
     private static final String NOTIFICATION_SETTINGS_ID = "NotificationSettings";
     private static final Pattern EMAIL_PATTERN = Pattern.compile("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
     private static final UserEmails.Type RECOVERY_EMAIL_TYPE = UserEmails.Type.create("recovery");
+    private static final MeEmails.Type ME_RECOVERY_EMAIL_TYPE = MeEmails.Type.Recovery;
 
     /**
      * 统一的返回结果封装
@@ -333,9 +347,16 @@ public class OciUtils {
      * 获取当前密码策略
      */
     public static List<com.oracle.bmc.identitydomains.model.PasswordPolicy> getCurrentPasswordPolicy(OracleInstanceFetcher fetcher) {
+        return getCurrentPasswordPolicy(fetcher, null);
+    }
 
+    /**
+     * 获取指定域当前密码策略
+     */
+    public static List<com.oracle.bmc.identitydomains.model.PasswordPolicy> getCurrentPasswordPolicy(OracleInstanceFetcher fetcher,
+                                                                                                     String domainUrl) {
         try {
-            return listPasswordPolicies(prepareIdentityDomainsClient(fetcher));
+            return listPasswordPolicies(prepareIdentityDomainsClient(fetcher, domainUrl));
         } catch (Exception e) {
             log.error("Failed to get password policies: {}", e.getMessage(), e);
             return Collections.emptyList();
@@ -346,7 +367,14 @@ public class OciUtils {
      * 获取当前自定义密码策略
      */
     public static PasswordPolicy getCurrentCustomPasswordPolicy(OracleInstanceFetcher fetcher) {
-        return getCurrentPasswordPolicy(fetcher).parallelStream()
+        return getCurrentCustomPasswordPolicy(fetcher, null);
+    }
+
+    /**
+     * 获取指定域当前自定义密码策略
+     */
+    public static PasswordPolicy getCurrentCustomPasswordPolicy(OracleInstanceFetcher fetcher, String domainUrl) {
+        return getCurrentPasswordPolicy(fetcher, domainUrl).parallelStream()
                 .filter(x -> x.getPasswordStrength() == PasswordPolicy.PasswordStrength.Custom)
                 .findAny()
                 .orElse(PasswordPolicy.builder().build());
@@ -356,8 +384,39 @@ public class OciUtils {
      * Identity Domains 清除用户 MFA 因子
      */
     public static void removeUserMfaFactors(OracleInstanceFetcher fetcher, String userId) {
+        removeUserMfaFactors(fetcher, userId, null);
+    }
+
+    /**
+     * Identity Domains 清除指定域用户 MFA 因子
+     */
+    public static void removeUserMfaFactors(OracleInstanceFetcher fetcher, String userId, String domainUrl) {
         try {
-            IdentityDomainsClient client = prepareIdentityDomainsClient(fetcher);
+            IdentityDomainsClient client = prepareIdentityDomainsClient(fetcher, domainUrl);
+            if (isSelfTarget(fetcher, userId)) {
+                Me currentMe = client.getMe(GetMeRequest.builder().build()).getMe();
+                if (currentMe == null) {
+                    throw new RuntimeException("Current user not found in Identity Domains");
+                }
+
+                MyAuthenticationFactorsRemover remover = MyAuthenticationFactorsRemover.builder()
+                        .schemas(Collections.singletonList(AUTHENTICATION_FACTORS_REMOVER_SCHEMA))
+                        .type(MyAuthenticationFactorsRemover.Type.Mfa)
+                        .user(MyAuthenticationFactorsRemoverUser.builder()
+                                .value(currentMe.getId())
+                                .ocid(currentMe.getOcid())
+                                .display(currentMe.getDisplayName())
+                                .build())
+                        .build();
+
+                client.createMyAuthenticationFactorsRemover(
+                        CreateMyAuthenticationFactorsRemoverRequest.builder()
+                                .myAuthenticationFactorsRemover(remover)
+                                .build()
+                );
+                return;
+            }
+
             User currentUser = client.getUser(GetUserRequest.builder()
                     .userId(userId)
                     .build()).getUser();
@@ -392,9 +451,47 @@ public class OciUtils {
     public static PasswordOperationRsp changeUserPassword(OracleInstanceFetcher fetcher,
                                                           String userId,
                                                           String newPassword,
-                                                          Boolean bypassNotification) {
+                                                          Boolean bypassNotification,
+                                                          String oldPassword) {
+        return changeUserPassword(fetcher, userId, newPassword, bypassNotification, oldPassword, null);
+    }
+
+    /**
+     * Identity Domains 指定密码修改
+     */
+    public static PasswordOperationRsp changeUserPassword(OracleInstanceFetcher fetcher,
+                                                          String userId,
+                                                          String newPassword,
+                                                          Boolean bypassNotification,
+                                                          String oldPassword,
+                                                          String domainUrl) {
         try {
-            IdentityDomainsClient client = prepareIdentityDomainsClient(fetcher);
+            IdentityDomainsClient client = prepareIdentityDomainsClient(fetcher, domainUrl);
+            if (isSelfTarget(fetcher, userId)) {
+                if (StringUtils.isBlank(oldPassword)) {
+                    throw new IllegalArgumentException("当前目标是签名用户本人，自助改密必须提供旧密码");
+                }
+                MePasswordChanger changer = MePasswordChanger.builder()
+                        .schemas(Collections.singletonList(ME_PASSWORD_CHANGER_SCHEMA))
+                        .oldPassword(oldPassword)
+                        .password(newPassword)
+                        .build();
+
+                PutMePasswordChangerResponse response = client.putMePasswordChanger(
+                        PutMePasswordChangerRequest.builder()
+                                .mePasswordChanger(changer)
+                                .build()
+                );
+
+                MePasswordChanger rsp = response.getMePasswordChanger();
+                return PasswordOperationRsp.builder()
+                        .userId(userId)
+                        .resourceId(rsp == null ? null : rsp.getId())
+                        .operation("CHANGE_PASSWORD")
+                        .notificationBypassed(Boolean.TRUE.equals(bypassNotification))
+                        .build();
+            }
+
             UserPasswordChanger changer = UserPasswordChanger.builder()
                     .schemas(Collections.singletonList(USER_PASSWORD_CHANGER_SCHEMA))
                     .password(newPassword)
@@ -427,8 +524,22 @@ public class OciUtils {
                                                          String userId,
                                                          Boolean bypassNotification,
                                                          Boolean userFlowControlledByExternalClient) {
+        return resetUserPassword(fetcher, userId, bypassNotification, userFlowControlledByExternalClient, null);
+    }
+
+    /**
+     * Identity Domains 随机重置密码
+     */
+    public static PasswordOperationRsp resetUserPassword(OracleInstanceFetcher fetcher,
+                                                         String userId,
+                                                         Boolean bypassNotification,
+                                                         Boolean userFlowControlledByExternalClient,
+                                                         String domainUrl) {
         try {
-            IdentityDomainsClient client = prepareIdentityDomainsClient(fetcher);
+            if (isSelfTarget(fetcher, userId)) {
+                throw new IllegalStateException("当前目标是签名用户本人。随机重置密码仍走管理员接口，需要 Help Desk Administrator 或更高角色。");
+            }
+            IdentityDomainsClient client = prepareIdentityDomainsClient(fetcher, domainUrl);
             UserPasswordResetter resetter = UserPasswordResetter.builder()
                     .schemas(Collections.singletonList(USER_PASSWORD_RESETTER_SCHEMA))
                     .bypassNotification(Boolean.TRUE.equals(bypassNotification))
@@ -460,9 +571,50 @@ public class OciUtils {
      */
     public static String updateUserRecoveryEmail(OracleInstanceFetcher fetcher,
                                                  String userId,
-                                                 String recoveryEmail) {
+                                                 String recoveryEmail,
+                                                 String currentPassword) {
+        return updateUserRecoveryEmail(fetcher, userId, recoveryEmail, currentPassword, null);
+    }
+
+    /**
+     * Identity Domains 恢复邮箱更新
+     */
+    public static String updateUserRecoveryEmail(OracleInstanceFetcher fetcher,
+                                                 String userId,
+                                                 String recoveryEmail,
+                                                 String currentPassword,
+                                                 String domainUrl) {
         try {
-            IdentityDomainsClient client = prepareIdentityDomainsClient(fetcher);
+            IdentityDomainsClient client = prepareIdentityDomainsClient(fetcher, domainUrl);
+            if (isSelfTarget(fetcher, userId)) {
+                if (StringUtils.isBlank(currentPassword)) {
+                    throw new IllegalArgumentException("当前目标是签名用户本人，自助修改 recovery email 必须提供当前密码");
+                }
+
+                Me currentMe = client.getMe(GetMeRequest.builder().build()).getMe();
+                if (currentMe == null) {
+                    throw new RuntimeException("Current user not found in Identity Domains");
+                }
+
+                String normalizedRecoveryEmail = normalizeOptionalEmail(recoveryEmail);
+                List<MeEmails> mergedEmails = mergeMeRecoveryEmail(currentMe.getEmails(), normalizedRecoveryEmail);
+
+                Me updatedMe = currentMe.toBuilder()
+                        .emails(mergedEmails)
+                        .urnIetfParamsScimSchemasOracleIdcsExtensionMeUser(
+                                ExtensionMeUser.builder()
+                                        .currentPassword(currentPassword)
+                                        .build()
+                        )
+                        .build();
+
+                Me rsp = client.putMe(PutMeRequest.builder()
+                        .me(updatedMe)
+                        .build()).getMe();
+
+                return extractRecoveryEmail(rsp == null ? updatedMe : rsp);
+            }
+
             User currentUser = client.getUser(GetUserRequest.builder()
                     .userId(userId)
                     .build()).getUser();
@@ -472,7 +624,7 @@ public class OciUtils {
             }
 
             String normalizedRecoveryEmail = normalizeOptionalEmail(recoveryEmail);
-            List<UserEmails> mergedEmails = mergeRecoveryEmail(currentUser.getEmails(), normalizedRecoveryEmail);
+            List<UserEmails> mergedEmails = mergeUserRecoveryEmail(currentUser.getEmails(), normalizedRecoveryEmail);
 
             User updatedUser = currentUser.toBuilder()
                     .emails(mergedEmails)
@@ -511,7 +663,7 @@ public class OciUtils {
         return normalized;
     }
 
-    private static List<UserEmails> mergeRecoveryEmail(List<UserEmails> existingEmails, String recoveryEmail) {
+    private static List<UserEmails> mergeUserRecoveryEmail(List<UserEmails> existingEmails, String recoveryEmail) {
         List<UserEmails> merged = Optional.ofNullable(existingEmails)
                 .orElse(Collections.emptyList())
                 .stream()
@@ -530,11 +682,40 @@ public class OciUtils {
         return merged;
     }
 
+    private static List<MeEmails> mergeMeRecoveryEmail(List<MeEmails> existingEmails, String recoveryEmail) {
+        List<MeEmails> merged = Optional.ofNullable(existingEmails)
+                .orElse(Collections.emptyList())
+                .stream()
+                .filter(Objects::nonNull)
+                .filter(email -> !ME_RECOVERY_EMAIL_TYPE.equals(email.getType()))
+                .map(OciUtils::copyWritableEmail)
+                .collect(Collectors.toCollection(ArrayList::new));
+
+        if (StringUtils.isNotBlank(recoveryEmail)) {
+            merged.add(MeEmails.builder()
+                    .value(recoveryEmail)
+                    .type(ME_RECOVERY_EMAIL_TYPE)
+                    .primary(Boolean.FALSE)
+                    .build());
+        }
+        return merged;
+    }
+
     private static UserEmails copyWritableEmail(UserEmails email) {
         return UserEmails.builder()
                 .value(email.getValue())
                 .type(email.getType())
                 .primary(email.getPrimary())
+                .build();
+    }
+
+    private static MeEmails copyWritableEmail(MeEmails email) {
+        return MeEmails.builder()
+                .value(email.getValue())
+                .type(email.getType())
+                .primary(email.getPrimary())
+                .secondary(email.getSecondary())
+                .verified(email.getVerified())
                 .build();
     }
 
@@ -551,9 +732,36 @@ public class OciUtils {
                 .orElse(null);
     }
 
+    private static String extractRecoveryEmail(Me me) {
+        return Optional.ofNullable(me)
+                .map(Me::getEmails)
+                .orElse(Collections.emptyList())
+                .stream()
+                .filter(Objects::nonNull)
+                .filter(email -> ME_RECOVERY_EMAIL_TYPE.equals(email.getType()))
+                .map(MeEmails::getValue)
+                .filter(StringUtils::isNotBlank)
+                .findFirst()
+                .orElse(null);
+    }
+
+    private static boolean isSelfTarget(OracleInstanceFetcher fetcher, String userId) {
+        String authUserId = Optional.ofNullable(fetcher)
+                .map(OracleInstanceFetcher::getUser)
+                .map(user -> user.getOciCfg().getUserId())
+                .orElse(null);
+        return StringUtils.isNotBlank(authUserId) && StringUtils.equals(authUserId, userId);
+    }
+
     private static IdentityDomainsClient prepareIdentityDomainsClient(OracleInstanceFetcher fetcher) {
+        return prepareIdentityDomainsClient(fetcher, null);
+    }
+
+    public static IdentityDomainsClient prepareIdentityDomainsClient(OracleInstanceFetcher fetcher, String explicitDomainUrl) {
         String tenantId = fetcher.getUser().getOciCfg().getTenantId();
-        String domainUrl = getDomain(fetcher.getIdentityClient(), tenantId);
+        String domainUrl = StringUtils.isNotBlank(explicitDomainUrl)
+                ? explicitDomainUrl
+                : getDomain(fetcher.getIdentityClient(), tenantId);
         if (StringUtils.isBlank(domainUrl)) {
             throw new RuntimeException("No active Identity Domain found for tenant: " + tenantId);
         }
@@ -563,18 +771,41 @@ public class OciUtils {
     }
 
     /**
-     * 获取 Domain URL
+     * 列出所有 Identity Domains
      */
-    public static String getDomain(IdentityClient identityClient, String compartmentId) {
+    public static List<DomainSummary> listDomains(IdentityClient identityClient, String compartmentId) {
         try {
             ListDomainsResponse response = identityClient.listDomains(
                     ListDomainsRequest.builder().compartmentId(compartmentId).build()
             );
-            for (DomainSummary domain : response.getItems()) {
-                if (domain.getLifecycleState() == DomainSummary.LifecycleState.Active) {
-                    log.debug("Found domain [{}] URL: {}", domain.getDisplayName(), domain.getUrl());
-                    return domain.getUrl();
-                }
+            return Optional.ofNullable(response.getItems())
+                    .orElse(Collections.emptyList())
+                    .stream()
+                    .sorted(Comparator
+                            .comparing((DomainSummary x) -> x.getType() != DomainSummary.Type.Default)
+                            .thenComparing(x -> Optional.ofNullable(x.getDisplayName()).orElse("")))
+                    .collect(Collectors.toList());
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to list domains", e);
+        }
+    }
+
+    /**
+     * 获取 Domain URL
+     */
+    public static String getDomain(IdentityClient identityClient, String compartmentId) {
+        try {
+            List<DomainSummary> domains = listDomains(identityClient, compartmentId);
+            Optional<DomainSummary> targetDomain = domains.stream()
+                    .filter(domain -> domain.getLifecycleState() == DomainSummary.LifecycleState.Active)
+                    .filter(domain -> domain.getType() == DomainSummary.Type.Default)
+                    .findFirst()
+                    .or(() -> domains.stream()
+                            .filter(domain -> domain.getLifecycleState() == DomainSummary.LifecycleState.Active)
+                            .findFirst());
+            if (targetDomain.isPresent()) {
+                log.debug("Found domain [{}] URL: {}", targetDomain.get().getDisplayName(), targetDomain.get().getUrl());
+                return targetDomain.get().getUrl();
             }
             log.error("No active domain found in compartment: {}", compartmentId);
             return "";

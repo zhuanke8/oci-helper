@@ -16,5 +16,8 @@ public class UpdateUserBasicParams {
     private String ociCfgId;
     @NotBlank(message = "userId不能为空")
     private String userId;
+    private String domainId;
+    private String domainName;
+    private String domainUrl;
 
 }

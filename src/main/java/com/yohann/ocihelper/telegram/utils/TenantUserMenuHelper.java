@@ -1,7 +1,9 @@
 package com.yohann.ocihelper.telegram.utils;
 
+import com.yohann.ocihelper.bean.response.oci.tenant.IdentityDomainRsp;
 import com.yohann.ocihelper.bean.response.oci.tenant.TenantInfoRsp;
 import com.yohann.ocihelper.telegram.builder.KeyboardBuilder;
+import com.yohann.ocihelper.telegram.storage.IdentityDomainSelectionStorage;
 import com.yohann.ocihelper.telegram.storage.PaginationStorage;
 import org.apache.commons.lang3.StringUtils;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.InlineKeyboardMarkup;
@@ -35,6 +37,12 @@ public final class TenantUserMenuHelper {
 
         StringBuilder message = new StringBuilder();
         message.append("【租户用户管理】\n\n");
+        IdentityDomainRsp selectedDomain = IdentityDomainSelectionStorage.getInstance().getSelectedDomain(chatId);
+        if (selectedDomain != null) {
+            message.append(String.format("当前域: %s (%s)\n\n",
+                    escapeMarkdown(defaultText(selectedDomain.getDisplayName(), "未知")),
+                    escapeMarkdown(defaultText(selectedDomain.getLifecycleState(), "未知"))));
+        }
         message.append(String.format("共 %d 个用户，当前第 %d/%d 页\n\n", users.size(), currentPage + 1, totalPages));
 
         if (users.isEmpty()) {
@@ -88,8 +96,12 @@ public final class TenantUserMenuHelper {
         keyboard.add(new InlineKeyboardRow(
                 KeyboardBuilder.button("🔄 刷新用户列表", "refresh_tenant_users")
         ));
+        IdentityDomainRsp selectedDomain = IdentityDomainSelectionStorage.getInstance().getSelectedDomain(chatId);
         keyboard.add(new InlineKeyboardRow(
-                KeyboardBuilder.button("◀️ 返回配置操作", "select_config:" + ociCfgId)
+                KeyboardBuilder.button(
+                        selectedDomain == null ? "◀️ 返回配置操作" : "◀️ 返回域列表",
+                        selectedDomain == null ? "select_config:" + ociCfgId : "identity_domain_management:" + ociCfgId
+                )
         ));
         keyboard.add(KeyboardBuilder.buildCancelRow());
         return new InlineKeyboardMarkup(keyboard);
@@ -153,10 +165,14 @@ public final class TenantUserMenuHelper {
         ));
     }
 
-    public static InlineKeyboardMarkup buildBackToConfigMarkup(String ociCfgId) {
+    public static InlineKeyboardMarkup buildBackToConfigMarkup(long chatId, String ociCfgId) {
+        IdentityDomainRsp selectedDomain = IdentityDomainSelectionStorage.getInstance().getSelectedDomain(chatId);
         return new InlineKeyboardMarkup(List.of(
                 new InlineKeyboardRow(
-                        KeyboardBuilder.button("◀️ 返回配置操作", "select_config:" + ociCfgId)
+                        KeyboardBuilder.button(
+                                selectedDomain == null ? "◀️ 返回配置操作" : "◀️ 返回域列表",
+                                selectedDomain == null ? "select_config:" + ociCfgId : "identity_domain_management:" + ociCfgId
+                        )
                 ),
                 KeyboardBuilder.buildCancelRow()
         ));

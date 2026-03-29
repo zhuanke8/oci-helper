@@ -30,6 +30,7 @@ public class TenantInfoRsp {
     @Data
     public static class TenantUserInfo{
            private String id;
+           private String ocid;
            private String name;
            private String email;
            private String description;

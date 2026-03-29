@@ -16,4 +16,9 @@ public class UpdateUserPasswordParams extends ResetUserPasswordParams {
 
     @NotBlank(message = "password不能为空")
     private String password;
+
+    /**
+     * 本人自助改密时必填，对应 Identity Domains MePasswordChanger.oldPassword。
+     */
+    private String oldPassword;
 }

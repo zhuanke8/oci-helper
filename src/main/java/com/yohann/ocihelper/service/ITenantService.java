@@ -1,8 +1,11 @@
 package com.yohann.ocihelper.service;
 
 import com.yohann.ocihelper.bean.params.oci.tenant.*;
+import com.yohann.ocihelper.bean.response.oci.tenant.IdentityDomainRsp;
 import com.yohann.ocihelper.bean.response.oci.tenant.PasswordOperationRsp;
 import com.yohann.ocihelper.bean.response.oci.tenant.TenantInfoRsp;
+
+import java.util.List;
 
 /**
  * @ClassName ITenantService
@@ -12,6 +15,12 @@ import com.yohann.ocihelper.bean.response.oci.tenant.TenantInfoRsp;
  **/
 public interface ITenantService {
     TenantInfoRsp tenantInfo(GetTenantInfoParams params);
+
+    List<IdentityDomainRsp> listIdentityDomains(GetIdentityDomainsParams params);
+
+    void activateDomain(UpdateDomainStateParams params);
+
+    void deactivateDomain(UpdateDomainStateParams params);
 
     void deleteMfaDevice(UpdateUserBasicParams params);
 

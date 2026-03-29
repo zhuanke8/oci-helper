@@ -13,5 +13,8 @@ public class GetTenantInfoParams {
 
     private String ociCfgId;
     private String region;
+    private String domainId;
+    private String domainName;
+    private String domainUrl;
     private boolean cleanReLaunch;
 }
