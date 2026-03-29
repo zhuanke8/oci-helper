@@ -128,6 +128,8 @@ public class TgBot implements LongPollingSingleThreadUpdateConsumer {
                 handleTenantUserChangePasswordInput(chatId, messageText);
             } else if (sessionType == ConfigSessionStorage.SessionType.TENANT_USER_RECOVERY_EMAIL) {
                 handleTenantUserRecoveryEmailInput(chatId, messageText);
+            } else if (sessionType == ConfigSessionStorage.SessionType.TENANT_USER_CREATE_DOMAIN_ADMIN) {
+                handleTenantUserCreateDomainAdminInput(chatId, messageText);
             }
             return;
         }
@@ -1102,6 +1104,149 @@ public class TgBot implements LongPollingSingleThreadUpdateConsumer {
                     : TenantUserMenuHelper.buildUserDetailMarkup(ociCfgId, userIndex);
             configStorage.clearSession(chatId);
             editOrSendMessage(chatId, messageId, text, markup);
+        }
+    }
+
+    private void handleTenantUserCreateDomainAdminInput(long chatId, String input) {
+        ConfigSessionStorage configStorage = ConfigSessionStorage.getInstance();
+        ConfigSessionStorage.SessionState state = configStorage.getSessionState(chatId);
+        if (state == null) {
+            sendMessage(chatId, "❌ 会话已失效，请重新进入域用户管理");
+            return;
+        }
+
+        String normalizedInput = input == null ? "" : input.trim();
+        String step = getSessionString(state, "step");
+        String ociCfgId = getSessionString(state, "ociCfgId");
+        Integer messageId = getSessionMessageId(state);
+        com.yohann.ocihelper.bean.response.oci.tenant.IdentityDomainRsp selectedDomain =
+                com.yohann.ocihelper.telegram.storage.IdentityDomainSelectionStorage.getInstance().getSelectedDomain(chatId);
+
+        if (selectedDomain == null || Boolean.TRUE.equals(selectedDomain.getDefaultDomain())) {
+            configStorage.clearSession(chatId);
+            editOrSendMessage(
+                    chatId,
+                    messageId,
+                    "❌ 仅支持在非 Default 域中创建域管理员用户",
+                    TenantUserMenuHelper.buildBackToListMarkup(ociCfgId)
+            );
+            return;
+        }
+
+        if ("email".equals(step) || step == null) {
+            String normalizedEmail = normalizedInput.toLowerCase();
+            if (!EMAIL_PATTERN.matcher(normalizedEmail).matches()) {
+                sendMessage(chatId, "❌ 邮箱格式不正确，请输入标准邮箱地址或发送 /cancel 取消");
+                return;
+            }
+
+            state.getData().put("userName", normalizedEmail);
+            state.getData().put("step", "display_name");
+            editOrSendMessage(
+                    chatId,
+                    messageId,
+                    "【新建域管理员】\n\n第 2 步：请输入用户显示名称。\n例如：`张三` 或 `Alice Chen`。\n\n发送 /cancel 可取消当前输入。",
+                    TenantUserMenuHelper.buildCreateUserInputMarkup()
+            );
+            return;
+        }
+
+        if ("display_name".equals(step)) {
+            if (normalizedInput.isEmpty()) {
+                sendMessage(chatId, "❌ 显示名称不能为空，请重新输入或发送 /cancel 取消");
+                return;
+            }
+
+            state.getData().put("displayName", normalizedInput);
+            state.getData().put("step", "password");
+            editOrSendMessage(
+                    chatId,
+                    messageId,
+                    "【新建域管理员】\n\n第 3 步：请输入初始登录密码。\n创建成功后会自动授予 `Identity Domain Administrator` 角色。\n\n发送 /cancel 可取消当前输入。",
+                    TenantUserMenuHelper.buildCreateUserInputMarkup()
+            );
+            return;
+        }
+
+        if (normalizedInput.isEmpty()) {
+            sendMessage(chatId, "❌ 初始密码不能为空，请重新输入或发送 /cancel 取消");
+            return;
+        }
+
+        try {
+            com.yohann.ocihelper.service.ITenantService tenantService =
+                    SpringUtil.getBean(com.yohann.ocihelper.service.ITenantService.class);
+            com.yohann.ocihelper.bean.params.oci.tenant.CreateIdentityDomainAdminUserParams params =
+                    new com.yohann.ocihelper.bean.params.oci.tenant.CreateIdentityDomainAdminUserParams();
+            params.setOciCfgId(ociCfgId);
+            params.setDomainId(getSessionString(state, "domainId"));
+            params.setDomainName(getSessionString(state, "domainName"));
+            params.setDomainUrl(getSessionString(state, "domainUrl"));
+            params.setUserName(getSessionString(state, "userName"));
+            params.setDisplayName(getSessionString(state, "displayName"));
+            params.setPassword(normalizedInput);
+            com.yohann.ocihelper.bean.response.oci.tenant.TenantInfoRsp.TenantUserInfo createdUser =
+                    tenantService.createIdentityDomainAdminUser(params);
+
+            com.yohann.ocihelper.bean.params.oci.tenant.GetTenantInfoParams infoParams =
+                    new com.yohann.ocihelper.bean.params.oci.tenant.GetTenantInfoParams();
+            infoParams.setOciCfgId(ociCfgId);
+            infoParams.setCleanReLaunch(false);
+            infoParams.setDomainId(getSessionString(state, "domainId"));
+            infoParams.setDomainName(getSessionString(state, "domainName"));
+            infoParams.setDomainUrl(getSessionString(state, "domainUrl"));
+            java.util.List<com.yohann.ocihelper.bean.response.oci.tenant.TenantInfoRsp.TenantUserInfo> users =
+                    tenantService.tenantInfo(infoParams).getUserList();
+            if (users == null) {
+                users = java.util.Collections.emptyList();
+            }
+            TenantUserSelectionStorage.getInstance().setConfigContext(chatId, ociCfgId);
+            TenantUserSelectionStorage.getInstance().setUserCache(chatId, users);
+
+            int createdIndex = -1;
+            for (int i = 0; i < users.size(); i++) {
+                com.yohann.ocihelper.bean.response.oci.tenant.TenantInfoRsp.TenantUserInfo user = users.get(i);
+                if (user == null) {
+                    continue;
+                }
+                if (createdUser != null && createdUser.getId() != null && createdUser.getId().equals(user.getId())) {
+                    createdIndex = i;
+                    createdUser = user;
+                    break;
+                }
+                if (params.getUserName().equalsIgnoreCase(String.valueOf(user.getEmail()))) {
+                    createdIndex = i;
+                    createdUser = user;
+                    break;
+                }
+            }
+
+            configStorage.clearSession(chatId);
+            if (createdIndex >= 0 && createdUser != null) {
+                editOrSendMessage(
+                        chatId,
+                        messageId,
+                        TenantUserMenuHelper.buildUserDetailText(createdUser, createdIndex, "✅ 域管理员用户已创建，并已授予域管理员角色"),
+                        TenantUserMenuHelper.buildUserDetailMarkup(ociCfgId, createdIndex)
+                );
+                return;
+            }
+
+            editOrSendMessage(
+                    chatId,
+                    messageId,
+                    "✅ 域管理员用户已创建，并已授予域管理员角色",
+                    TenantUserMenuHelper.buildBackToListMarkup(ociCfgId)
+            );
+        } catch (Exception e) {
+            log.error("Failed to create identity domain admin user: chatId={}", chatId, e);
+            configStorage.clearSession(chatId);
+            editOrSendMessage(
+                    chatId,
+                    messageId,
+                    "❌ 创建域管理员用户失败: " + e.getMessage(),
+                    TenantUserMenuHelper.buildBackToListMarkup(ociCfgId)
+            );
         }
     }
 

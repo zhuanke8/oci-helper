@@ -1,6 +1,7 @@
 package com.yohann.ocihelper.controller;
 
 import com.yohann.ocihelper.bean.ResponseData;
+import com.yohann.ocihelper.bean.params.oci.tenant.CreateIdentityDomainAdminUserParams;
 import com.yohann.ocihelper.bean.params.oci.tenant.GetIdentityDomainsParams;
 import com.yohann.ocihelper.bean.params.oci.tenant.GetTenantInfoParams;
 import com.yohann.ocihelper.bean.params.oci.tenant.ResetUserPasswordParams;
@@ -44,6 +45,12 @@ public class TenantController {
     @RequestMapping("listIdentityDomains")
     public ResponseData<List<IdentityDomainRsp>> listIdentityDomains(@Validated @RequestBody GetIdentityDomainsParams params) {
         return ResponseData.successData(tenantService.listIdentityDomains(params));
+    }
+
+    @RequestMapping("createIdentityDomainAdminUser")
+    public ResponseData<TenantInfoRsp.TenantUserInfo> createIdentityDomainAdminUser(@Validated @RequestBody CreateIdentityDomainAdminUserParams params) {
+        TenantInfoRsp.TenantUserInfo rsp = tenantService.createIdentityDomainAdminUser(params);
+        return ResponseData.successData(rsp, "Identity Domain 域管理员用户创建成功");
     }
 
     @RequestMapping("activateDomain")

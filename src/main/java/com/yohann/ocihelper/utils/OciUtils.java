@@ -8,7 +8,13 @@ import com.oracle.bmc.identity.responses.ListDomainsResponse;
 import com.oracle.bmc.identitydomains.IdentityDomainsClient;
 import com.oracle.bmc.identitydomains.model.AuthenticationFactorsRemover;
 import com.oracle.bmc.identitydomains.model.AuthenticationFactorsRemoverUser;
+import com.oracle.bmc.identitydomains.model.AppRole;
+import com.oracle.bmc.identitydomains.model.AppRoles;
 import com.oracle.bmc.identitydomains.model.ExtensionMeUser;
+import com.oracle.bmc.identitydomains.model.Grant;
+import com.oracle.bmc.identitydomains.model.GrantApp;
+import com.oracle.bmc.identitydomains.model.GrantEntitlement;
+import com.oracle.bmc.identitydomains.model.GrantGrantee;
 import com.oracle.bmc.identitydomains.model.Me;
 import com.oracle.bmc.identitydomains.model.MeEmails;
 import com.oracle.bmc.identitydomains.model.MePasswordChanger;
@@ -22,10 +28,13 @@ import com.oracle.bmc.identitydomains.model.UserEmails;
 import com.oracle.bmc.identitydomains.model.UserPasswordChanger;
 import com.oracle.bmc.identitydomains.model.UserPasswordResetter;
 import com.oracle.bmc.identitydomains.requests.CreateAuthenticationFactorsRemoverRequest;
+import com.oracle.bmc.identitydomains.requests.CreateGrantRequest;
 import com.oracle.bmc.identitydomains.requests.CreateMyAuthenticationFactorsRemoverRequest;
+import com.oracle.bmc.identitydomains.requests.CreateUserRequest;
 import com.oracle.bmc.identitydomains.requests.GetMeRequest;
 import com.oracle.bmc.identitydomains.requests.GetUserRequest;
 import com.oracle.bmc.identitydomains.requests.GetNotificationSettingRequest;
+import com.oracle.bmc.identitydomains.requests.ListAppRolesRequest;
 import com.oracle.bmc.identitydomains.requests.ListPasswordPoliciesRequest;
 import com.oracle.bmc.identitydomains.requests.PutUserRequest;
 import com.oracle.bmc.identitydomains.requests.PutNotificationSettingRequest;
@@ -67,10 +76,16 @@ public class OciUtils {
             "urn:ietf:params:scim:schemas:oracle:idcs:AuthenticationFactorsRemover";
     private static final String ME_PASSWORD_CHANGER_SCHEMA =
             "urn:ietf:params:scim:schemas:oracle:idcs:MePasswordChanger";
+    private static final String USER_SCHEMA =
+            "urn:ietf:params:scim:schemas:core:2.0:User";
+    private static final String GRANT_SCHEMA =
+            "urn:ietf:params:scim:schemas:oracle:idcs:Grant";
     private static final String NOTIFICATION_SETTINGS_ID = "NotificationSettings";
     private static final Pattern EMAIL_PATTERN = Pattern.compile("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
     private static final UserEmails.Type RECOVERY_EMAIL_TYPE = UserEmails.Type.create("recovery");
+    private static final UserEmails.Type WORK_EMAIL_TYPE = UserEmails.Type.create("work");
     private static final MeEmails.Type ME_RECOVERY_EMAIL_TYPE = MeEmails.Type.Recovery;
+    private static final String DEFAULT_DOMAIN_ADMIN_ROLE_NAME = "Identity Domain Administrator";
 
     /**
      * 统一的返回结果封装
@@ -642,6 +657,59 @@ public class OciUtils {
     }
 
     /**
+     * 创建 Identity Domain 用户并授予域管理员角色。
+     */
+    public static User createIdentityDomainAdminUser(OracleInstanceFetcher fetcher,
+                                                     String domainUrl,
+                                                     String userName,
+                                                     String displayName,
+                                                     String password) {
+        User createdUser = null;
+        try {
+            IdentityDomainsClient client = prepareIdentityDomainsClient(fetcher, domainUrl);
+            String normalizedUserName = normalizeOptionalEmail(userName);
+            if (normalizedUserName == null) {
+                throw new IllegalArgumentException("Invalid user email: " + userName);
+            }
+            String normalizedDisplayName = StringUtils.isBlank(displayName) ? normalizedUserName : displayName.trim();
+
+            createdUser = client.createUser(CreateUserRequest.builder()
+                    .user(User.builder()
+                            .schemas(Collections.singletonList(USER_SCHEMA))
+                            .userName(normalizedUserName)
+                            .displayName(normalizedDisplayName)
+                            .active(Boolean.TRUE)
+                            .password(password)
+                            .emails(Collections.singletonList(
+                                    UserEmails.builder()
+                                            .value(normalizedUserName)
+                                            .type(WORK_EMAIL_TYPE)
+                                            .primary(Boolean.TRUE)
+                                            .build()
+                            ))
+                            .build())
+                    .build())
+                    .getUser();
+
+            if (createdUser == null || StringUtils.isBlank(createdUser.getId())) {
+                throw new RuntimeException("Identity Domain user created but response user is empty");
+            }
+
+            AppRole domainAdminRole = findDomainAdminRole(client);
+            grantAppRoleToUser(client, createdUser, domainAdminRole);
+            return createdUser;
+        } catch (Exception e) {
+            if (createdUser != null && StringUtils.isNotBlank(createdUser.getId())) {
+                throw new RuntimeException(
+                        "User created but failed to grant domain administrator role, userId=" + createdUser.getId(),
+                        e
+                );
+            }
+            throw new RuntimeException("Failed to create identity domain administrator user", e);
+        }
+    }
+
+    /**
      * 列出密码策略
      */
     private static List<com.oracle.bmc.identitydomains.model.PasswordPolicy> listPasswordPolicies(IdentityDomainsClient domainsClient) {
@@ -743,6 +811,63 @@ public class OciUtils {
                 .filter(StringUtils::isNotBlank)
                 .findFirst()
                 .orElse(null);
+    }
+
+    private static AppRole findDomainAdminRole(IdentityDomainsClient client) {
+        List<AppRole> appRoles = Optional.ofNullable(client.listAppRoles(
+                        ListAppRolesRequest.builder()
+                                .count(1000)
+                                .build())
+                        .getAppRoles())
+                .map(AppRoles::getResources)
+                .orElse(Collections.emptyList());
+
+        return appRoles.stream()
+                .filter(Objects::nonNull)
+                .filter(role -> Boolean.TRUE.equals(role.getAdminRole()))
+                .filter(role -> StringUtils.equalsIgnoreCase(role.getDisplayName(), DEFAULT_DOMAIN_ADMIN_ROLE_NAME)
+                        || StringUtils.equalsIgnoreCase(role.getUniqueName(), DEFAULT_DOMAIN_ADMIN_ROLE_NAME)
+                        || (StringUtils.containsIgnoreCase(role.getDisplayName(), "identity")
+                        && StringUtils.containsIgnoreCase(role.getDisplayName(), "administrator"))
+                        || (StringUtils.containsIgnoreCase(role.getUniqueName(), "identity")
+                        && StringUtils.containsIgnoreCase(role.getUniqueName(), "administrator")))
+                .findFirst()
+                .orElseThrow(() -> new IllegalStateException(
+                        "未找到域管理员角色[" + DEFAULT_DOMAIN_ADMIN_ROLE_NAME + "]，当前域管理员角色有: " +
+                                appRoles.stream()
+                                        .filter(Objects::nonNull)
+                                        .filter(role -> Boolean.TRUE.equals(role.getAdminRole()))
+                                        .map(AppRole::getDisplayName)
+                                        .filter(StringUtils::isNotBlank)
+                                        .distinct()
+                                        .collect(Collectors.joining(", "))
+                ));
+    }
+
+    private static void grantAppRoleToUser(IdentityDomainsClient client, User user, AppRole appRole) {
+        if (appRole.getApp() == null || StringUtils.isBlank(appRole.getApp().getValue())) {
+            throw new IllegalStateException("域管理员角色缺少关联 App 信息，无法创建 Grant");
+        }
+        client.createGrant(CreateGrantRequest.builder()
+                .grant(Grant.builder()
+                        .schemas(Collections.singletonList(GRANT_SCHEMA))
+                        .grantMechanism(Grant.GrantMechanism.AdministratorToUser)
+                        .grantee(GrantGrantee.builder()
+                                .type(GrantGrantee.Type.User)
+                                .value(user.getId())
+                                .display(user.getDisplayName())
+                                .build())
+                        .app(GrantApp.builder()
+                                .value(appRole.getApp() == null ? null : appRole.getApp().getValue())
+                                .ref(appRole.getApp() == null ? null : appRole.getApp().getRef())
+                                .display(appRole.getApp() == null ? null : appRole.getApp().getDisplay())
+                                .build())
+                        .entitlement(GrantEntitlement.builder()
+                                .attributeName("appRoles")
+                                .attributeValue(appRole.getId())
+                                .build())
+                        .build())
+                .build());
     }
 
     private static boolean isSelfTarget(OracleInstanceFetcher fetcher, String userId) {

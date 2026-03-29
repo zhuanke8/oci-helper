@@ -18,6 +18,8 @@ public interface ITenantService {
 
     List<IdentityDomainRsp> listIdentityDomains(GetIdentityDomainsParams params);
 
+    TenantInfoRsp.TenantUserInfo createIdentityDomainAdminUser(CreateIdentityDomainAdminUserParams params);
+
     void activateDomain(UpdateDomainStateParams params);
 
     void deactivateDomain(UpdateDomainStateParams params);

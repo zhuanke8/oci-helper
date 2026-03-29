@@ -64,10 +64,18 @@ public class TenantUserManagementHandler extends AbstractCallbackHandler {
             List<TenantInfoRsp.TenantUserInfo> users = reload ? loadAndCacheUsers(chatId, ociCfgId) : storage.getCachedUsers(chatId);
 
             if (CollectionUtil.isEmpty(users)) {
+                IdentityDomainRsp selectedDomain = getSelectedDomain(chatId);
+                String emptyText = selectedDomain == null
+                        ? "❌ 当前租户下暂无用户"
+                        : String.format(
+                        "【租户用户管理】\n\n当前域: %s (%s)\n\n当前域下暂无用户。",
+                        TenantUserMenuHelper.escapeMarkdown(defaultValue(selectedDomain.getDisplayName(), "未知")),
+                        TenantUserMenuHelper.escapeMarkdown(defaultValue(selectedDomain.getLifecycleState(), "未知"))
+                );
                 return buildTenantEditMessage(
                         callbackQuery,
-                        "❌ 当前租户下暂无用户",
-                        TenantUserMenuHelper.buildBackToConfigMarkup(chatId, ociCfgId)
+                        emptyText,
+                        TenantUserMenuHelper.buildEmptyUserListMarkup(chatId, ociCfgId)
                 );
             }
 
@@ -613,6 +621,66 @@ class TenantUserDiagnosisHandler extends AbstractCallbackHandler {
 
 @Slf4j
 @Component
+class TenantUserPromptCreateDomainAdminHandler extends AbstractCallbackHandler {
+
+    @Override
+    public BotApiMethod<? extends Serializable> handle(CallbackQuery callbackQuery, TelegramClient telegramClient) {
+        long chatId = callbackQuery.getMessage().getChatId();
+        String ociCfgId = TenantUserManagementHandler.getOciCfgId(chatId);
+        IdentityDomainRsp selectedDomain = TenantUserManagementHandler.getSelectedDomain(chatId);
+        if (ociCfgId == null) {
+            return buildEditMessage(callbackQuery, "❌ 用户上下文已失效，请重新进入配置操作");
+        }
+        if (selectedDomain == null) {
+            return buildEditMessage(
+                    callbackQuery,
+                    "❌ 请先从 Identity Domains 选择一个域，再创建域管理员用户",
+                    TenantUserMenuHelper.buildBackToListMarkup(ociCfgId)
+            );
+        }
+        if (Boolean.TRUE.equals(selectedDomain.getDefaultDomain())) {
+            return buildEditMessage(
+                    callbackQuery,
+                    "❌ 仅支持在非 Default 域中创建域管理员用户",
+                    TenantUserMenuHelper.buildBackToListMarkup(ociCfgId)
+            );
+        }
+
+        return TenantUserInputSessionSupport.startCreateDomainAdminSession(
+                callbackQuery,
+                "【新建域管理员】\n\n第 1 步：请输入新用户的登录邮箱。\n该邮箱会同时作为用户名和主邮箱。\n\n发送 /cancel 可取消当前输入。"
+        );
+    }
+
+    @Override
+    public String getCallbackPattern() {
+        return "tenant_user_prompt_create_domain_admin";
+    }
+}
+
+@Slf4j
+@Component
+class TenantUserCancelCreateDomainAdminHandler extends AbstractCallbackHandler {
+
+    @Override
+    public BotApiMethod<? extends Serializable> handle(CallbackQuery callbackQuery, TelegramClient telegramClient) {
+        long chatId = callbackQuery.getMessage().getChatId();
+        ConfigSessionStorage.getInstance().clearSession(chatId);
+        String ociCfgId = TenantUserManagementHandler.getOciCfgId(chatId);
+        if (ociCfgId == null) {
+            return buildEditMessage(callbackQuery, "❌ 用户上下文已失效，请重新进入配置操作");
+        }
+        return TenantUserManagementHandler.renderUserList(callbackQuery, chatId, ociCfgId, false);
+    }
+
+    @Override
+    public String getCallbackPattern() {
+        return "tenant_user_cancel_create_domain_admin";
+    }
+}
+
+@Slf4j
+@Component
 class TenantUserClearMfaHandler extends AbstractCallbackHandler {
 
     @Override
@@ -725,6 +793,39 @@ final class TenantUserInputSessionSupport {
                 callbackQuery,
                 prompt,
                 TenantUserMenuHelper.buildInputMarkup(userIndex)
+        );
+    }
+
+    static BotApiMethod<? extends Serializable> startCreateDomainAdminSession(CallbackQuery callbackQuery,
+                                                                              String prompt) {
+        long chatId = callbackQuery.getMessage().getChatId();
+        String ociCfgId = TenantUserManagementHandler.getOciCfgId(chatId);
+        IdentityDomainRsp selectedDomain = TenantUserManagementHandler.getSelectedDomain(chatId);
+        if (ociCfgId == null || selectedDomain == null) {
+            return TenantUserManagementHandler.buildTenantEditMessage(callbackQuery, "❌ 域上下文已失效，请重新打开用户列表");
+        }
+        if (Boolean.TRUE.equals(selectedDomain.getDefaultDomain())) {
+            return TenantUserManagementHandler.buildTenantEditMessage(
+                    callbackQuery,
+                    "❌ 仅支持在非 Default 域中创建域管理员用户",
+                    TenantUserMenuHelper.buildBackToListMarkup(ociCfgId)
+            );
+        }
+
+        ConfigSessionStorage configStorage = ConfigSessionStorage.getInstance();
+        configStorage.startSession(chatId, ConfigSessionStorage.SessionType.TENANT_USER_CREATE_DOMAIN_ADMIN);
+        ConfigSessionStorage.SessionState state = configStorage.getSessionState(chatId);
+        state.getData().put("ociCfgId", ociCfgId);
+        state.getData().put("messageId", callbackQuery.getMessage().getMessageId());
+        state.getData().put("domainId", selectedDomain.getId());
+        state.getData().put("domainName", selectedDomain.getDisplayName());
+        state.getData().put("domainUrl", selectedDomain.getUrl());
+        state.getData().put("step", "email");
+
+        return TenantUserManagementHandler.buildTenantEditMessage(
+                callbackQuery,
+                prompt,
+                TenantUserMenuHelper.buildCreateUserInputMarkup()
         );
     }
 }

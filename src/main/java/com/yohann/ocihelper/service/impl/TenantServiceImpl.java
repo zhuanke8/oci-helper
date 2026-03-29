@@ -18,6 +18,7 @@ import com.oracle.bmc.identitydomains.model.PasswordPolicy;
 import com.oracle.bmc.identitydomains.model.UserEmails;
 import com.yohann.ocihelper.bean.constant.CacheConstant;
 import com.yohann.ocihelper.bean.dto.SysUserDTO;
+import com.yohann.ocihelper.bean.params.oci.tenant.CreateIdentityDomainAdminUserParams;
 import com.yohann.ocihelper.bean.params.oci.tenant.GetIdentityDomainsParams;
 import com.yohann.ocihelper.bean.params.oci.tenant.GetTenantInfoParams;
 import com.yohann.ocihelper.bean.params.oci.tenant.ResetUserPasswordParams;
@@ -191,6 +192,25 @@ public class TenantServiceImpl implements ITenantService {
         } catch (Exception e) {
             log.error("查询 Identity Domains 失败", e);
             throw new OciException(-1, "查询 Identity Domains 失败", e);
+        }
+    }
+
+    @Override
+    public TenantInfoRsp.TenantUserInfo createIdentityDomainAdminUser(CreateIdentityDomainAdminUserParams params) {
+        SysUserDTO sysUserDTO = getAuthUser(params.getOciCfgId());
+        try (OracleInstanceFetcher fetcher = new OracleInstanceFetcher(sysUserDTO)) {
+            com.oracle.bmc.identitydomains.model.User createdUser = OciUtils.createIdentityDomainAdminUser(
+                    fetcher,
+                    params.getDomainUrl(),
+                    params.getUserName(),
+                    params.getDisplayName(),
+                    params.getPassword()
+            );
+            invalidateTenantCache(params.getOciCfgId());
+            return buildIdentityDomainUserInfo(createdUser);
+        } catch (Exception e) {
+            log.error("创建 Identity Domain 域管理员用户失败", e);
+            throw new OciException(-1, "创建 Identity Domain 域管理员用户失败", e);
         }
     }
 
