@@ -25,6 +25,7 @@ import com.oracle.bmc.identitydomains.model.PasswordPolicies;
 import com.oracle.bmc.identitydomains.model.PasswordPolicy;
 import com.oracle.bmc.identitydomains.model.User;
 import com.oracle.bmc.identitydomains.model.UserEmails;
+import com.oracle.bmc.identitydomains.model.UserName;
 import com.oracle.bmc.identitydomains.model.UserPasswordChanger;
 import com.oracle.bmc.identitydomains.model.UserPasswordResetter;
 import com.oracle.bmc.identitydomains.requests.CreateAuthenticationFactorsRemoverRequest;
@@ -677,6 +678,7 @@ public class OciUtils {
                     .user(User.builder()
                             .schemas(Collections.singletonList(USER_SCHEMA))
                             .userName(normalizedUserName)
+                            .name(buildIdentityDomainUserName(normalizedDisplayName))
                             .displayName(normalizedDisplayName)
                             .active(Boolean.TRUE)
                             .password(password)
@@ -729,6 +731,34 @@ public class OciUtils {
             throw new IllegalArgumentException("Invalid recovery email: " + email);
         }
         return normalized;
+    }
+
+    private static UserName buildIdentityDomainUserName(String displayName) {
+        String normalized = StringUtils.trimToEmpty(displayName);
+        if (normalized.isEmpty()) {
+            normalized = "User";
+        }
+
+        String[] parts = normalized.split("\\s+");
+        if (parts.length <= 1) {
+            return UserName.builder()
+                    .formatted(normalized)
+                    .givenName(normalized)
+                    .familyName(normalized)
+                    .build();
+        }
+
+        String familyName = parts[parts.length - 1];
+        String givenName = String.join(" ", Arrays.copyOf(parts, parts.length - 1));
+        if (StringUtils.isBlank(givenName)) {
+            givenName = familyName;
+        }
+
+        return UserName.builder()
+                .formatted(normalized)
+                .givenName(givenName)
+                .familyName(familyName)
+                .build();
     }
 
     private static List<UserEmails> mergeUserRecoveryEmail(List<UserEmails> existingEmails, String recoveryEmail) {
