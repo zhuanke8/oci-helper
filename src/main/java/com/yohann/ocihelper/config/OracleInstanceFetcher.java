@@ -338,30 +338,38 @@ public class OracleInstanceFetcher implements Closeable {
     }
 
     public void deleteAllMfa() {
+        deleteAllMfa(user.getOciCfg().getUserId());
+    }
+
+    public void deleteAllMfa(String targetUserId) {
         ListMfaTotpDevicesResponse listMfaTotpDevicesResponse = identityClient.listMfaTotpDevices(
                 ListMfaTotpDevicesRequest.builder()
-                        .userId(user.getOciCfg().getUserId())
+                        .userId(targetUserId)
                         .build());
         List<MfaTotpDeviceSummary> listMfaTotpDevicesResponseItems = listMfaTotpDevicesResponse.getItems();
         if (CollectionUtil.isNotEmpty(listMfaTotpDevicesResponseItems)) {
             listMfaTotpDevicesResponseItems.parallelStream().forEach(item -> {
                 identityClient.deleteMfaTotpDevice(DeleteMfaTotpDeviceRequest.builder()
                         .mfaTotpDeviceId(item.getId())
-                        .userId(user.getOciCfg().getUserId())
+                        .userId(targetUserId)
                         .build());
             });
         }
     }
 
     public void deleteAllApiKey() {
+        deleteAllApiKey(user.getOciCfg().getUserId());
+    }
+
+    public void deleteAllApiKey(String targetUserId) {
         ListApiKeysResponse listApiKeysResponse = identityClient.listApiKeys(ListApiKeysRequest.builder()
-                .userId(user.getOciCfg().getUserId())
+                .userId(targetUserId)
                 .build());
         List<ApiKey> items = listApiKeysResponse.getItems();
         if (CollectionUtil.isNotEmpty(items)) {
             items.parallelStream().forEach(item -> {
                 identityClient.deleteApiKey(DeleteApiKeyRequest.builder()
-                        .userId(user.getOciCfg().getUserId())
+                        .userId(targetUserId)
                         .fingerprint(item.getFingerprint())
                         .build());
             });
@@ -369,14 +377,22 @@ public class OracleInstanceFetcher implements Closeable {
     }
 
     public User getUserInfo() {
+        return getUserInfo(user.getOciCfg().getUserId());
+    }
+
+    public User getUserInfo(String targetUserId) {
         return identityClient.getUser(GetUserRequest.builder()
-                .userId(user.getOciCfg().getUserId())
+                .userId(targetUserId)
                 .build()).getUser();
     }
 
     public void updateUser(String email, String dbUserName, String description) {
+        updateUser(user.getOciCfg().getUserId(), email, dbUserName, description);
+    }
+
+    public void updateUser(String targetUserId, String email, String dbUserName, String description) {
         identityClient.updateUser(UpdateUserRequest.builder()
-                .userId(user.getOciCfg().getUserId())
+                .userId(targetUserId)
                 .updateUserDetails(UpdateUserDetails.builder()
                         .email(email)
                         .dbUserName(dbUserName)
@@ -386,9 +402,13 @@ public class OracleInstanceFetcher implements Closeable {
     }
 
     public String createOrResetUIPassword() {
+        return createOrResetUIPassword(user.getOciCfg().getUserId());
+    }
+
+    public String createOrResetUIPassword(String targetUserId) {
         CreateOrResetUIPasswordResponse uIPassword = identityClient.createOrResetUIPassword(
                 CreateOrResetUIPasswordRequest.builder()
-                        .userId(user.getOciCfg().getUserId())
+                        .userId(targetUserId)
                         .build());
         String password = uIPassword.getUIPassword().getPassword();
         log.info("用户:[{}],区域:[{}],成功创建/重置登录密码",

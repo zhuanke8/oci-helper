@@ -161,9 +161,9 @@ public class TenantServiceImpl implements ITenantService {
 
     @Override
     public void deleteMfaDevice(UpdateUserBasicParams params) {
-        SysUserDTO sysUserDTO = getTargetUser(params.getOciCfgId(), params.getUserId());
+        SysUserDTO sysUserDTO = getAuthUser(params.getOciCfgId());
         try (OracleInstanceFetcher fetcher = new OracleInstanceFetcher(sysUserDTO)) {
-            fetcher.deleteAllMfa();
+            fetcher.deleteAllMfa(params.getUserId());
             invalidateTenantCache(params.getOciCfgId());
         } catch (Exception e) {
             log.error("清除 MFA 设备失败", e);
@@ -173,9 +173,9 @@ public class TenantServiceImpl implements ITenantService {
 
     @Override
     public void deleteApiKey(UpdateUserBasicParams params) {
-        SysUserDTO sysUserDTO = getTargetUser(params.getOciCfgId(), params.getUserId());
+        SysUserDTO sysUserDTO = getAuthUser(params.getOciCfgId());
         try (OracleInstanceFetcher fetcher = new OracleInstanceFetcher(sysUserDTO)) {
-            fetcher.deleteAllApiKey();
+            fetcher.deleteAllApiKey(params.getUserId());
             invalidateTenantCache(params.getOciCfgId());
         } catch (Exception e) {
             log.error("清除所有 API 失败", e);
@@ -185,7 +185,7 @@ public class TenantServiceImpl implements ITenantService {
 
     @Override
     public PasswordOperationRsp resetPassword(ResetUserPasswordParams params) {
-        SysUserDTO sysUserDTO = getTargetUser(params.getOciCfgId(), params.getUserId());
+        SysUserDTO sysUserDTO = getAuthUser(params.getOciCfgId());
         try (OracleInstanceFetcher fetcher = new OracleInstanceFetcher(sysUserDTO)) {
             return OciUtils.resetUserPassword(fetcher,
                     params.getUserId(),
@@ -199,7 +199,7 @@ public class TenantServiceImpl implements ITenantService {
 
     @Override
     public PasswordOperationRsp updateUserPassword(UpdateUserPasswordParams params) {
-        SysUserDTO sysUserDTO = getTargetUser(params.getOciCfgId(), params.getUserId());
+        SysUserDTO sysUserDTO = getAuthUser(params.getOciCfgId());
         try (OracleInstanceFetcher fetcher = new OracleInstanceFetcher(sysUserDTO)) {
             return OciUtils.changeUserPassword(fetcher,
                     params.getUserId(),
@@ -213,9 +213,9 @@ public class TenantServiceImpl implements ITenantService {
 
     @Override
     public String resetConsolePassword(UpdateUserBasicParams params) {
-        SysUserDTO sysUserDTO = getTargetUser(params.getOciCfgId(), params.getUserId());
+        SysUserDTO sysUserDTO = getAuthUser(params.getOciCfgId());
         try (OracleInstanceFetcher fetcher = new OracleInstanceFetcher(sysUserDTO)) {
-            return fetcher.createOrResetUIPassword();
+            return fetcher.createOrResetUIPassword(params.getUserId());
         } catch (Exception e) {
             log.error("重置控制台密码失败", e);
             throw new OciException(-1, "重置控制台密码失败", e);
@@ -224,7 +224,7 @@ public class TenantServiceImpl implements ITenantService {
 
     @Override
     public String updateRecoveryEmail(UpdateUserRecoveryEmailParams params) {
-        SysUserDTO sysUserDTO = getTargetUser(params.getOciCfgId(), params.getUserId());
+        SysUserDTO sysUserDTO = getAuthUser(params.getOciCfgId());
         try (OracleInstanceFetcher fetcher = new OracleInstanceFetcher(sysUserDTO)) {
             String recoveryEmail = OciUtils.updateUserRecoveryEmail(fetcher, params.getUserId(), params.getRecoveryEmail());
             invalidateTenantCache(params.getOciCfgId());
@@ -237,9 +237,9 @@ public class TenantServiceImpl implements ITenantService {
 
     @Override
     public void updateUserInfo(UpdateUserInfoParams params) {
-        SysUserDTO sysUserDTO = getTargetUser(params.getOciCfgId(), params.getUserId());
+        SysUserDTO sysUserDTO = getAuthUser(params.getOciCfgId());
         try (OracleInstanceFetcher fetcher = new OracleInstanceFetcher(sysUserDTO)) {
-            fetcher.updateUser(params.getEmail(), params.getDbUserName(), params.getDescription());
+            fetcher.updateUser(params.getUserId(), params.getEmail(), params.getDbUserName(), params.getDescription());
             invalidateTenantCache(params.getOciCfgId());
         } catch (Exception e) {
             log.error("更新用户信息失败", e);
@@ -249,7 +249,7 @@ public class TenantServiceImpl implements ITenantService {
 
     @Override
     public void deleteUser(UpdateUserBasicParams params) {
-        SysUserDTO sysUserDTO = getTargetUser(params.getOciCfgId(), params.getUserId());
+        SysUserDTO sysUserDTO = getAuthUser(params.getOciCfgId());
         try (OracleInstanceFetcher fetcher = new OracleInstanceFetcher(sysUserDTO)) {
             fetcher.getIdentityClient().deleteUser(DeleteUserRequest.builder()
                     .userId(params.getUserId())
@@ -277,14 +277,8 @@ public class TenantServiceImpl implements ITenantService {
         }
     }
 
-    private SysUserDTO getTargetUser(String ociCfgId, String userId) {
-        SysUserDTO sysUserDTO = sysService.getOciUser(ociCfgId);
-        if (StrUtil.isNotBlank(userId)) {
-            SysUserDTO.OciCfg ociCfg = sysUserDTO.getOciCfg();
-            ociCfg.setUserId(userId);
-            sysUserDTO.setOciCfg(ociCfg);
-        }
-        return sysUserDTO;
+    private SysUserDTO getAuthUser(String ociCfgId) {
+        return sysService.getOciUser(ociCfgId);
     }
 
     private void invalidateTenantCache(String ociCfgId) {
