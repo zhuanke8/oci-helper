@@ -73,6 +73,7 @@ public final class TenantUserMenuHelper {
         int currentPage = Math.min(paginationStorage.getCurrentPage(chatId, pageType), totalPages - 1);
         int startIndex = PaginationStorage.getStartIndex(currentPage, PAGE_SIZE);
         int endIndex = PaginationStorage.getEndIndex(currentPage, PAGE_SIZE, users.size());
+        IdentityDomainRsp selectedDomain = IdentityDomainSelectionStorage.getInstance().getSelectedDomain(chatId);
 
         List<InlineKeyboardRow> keyboard = new ArrayList<>();
         for (int i = startIndex; i < endIndex; i += 2) {
