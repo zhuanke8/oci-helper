@@ -2,17 +2,22 @@ package com.yohann.ocihelper.telegram.handler.impl;
 
 import cn.hutool.core.collection.CollectionUtil;
 import cn.hutool.extra.spring.SpringUtil;
+import com.oracle.bmc.identitydomains.requests.GetUserRequest;
+import com.yohann.ocihelper.bean.dto.SysUserDTO;
 import com.yohann.ocihelper.bean.params.oci.tenant.GetTenantInfoParams;
 import com.yohann.ocihelper.bean.params.oci.tenant.ResetUserPasswordParams;
 import com.yohann.ocihelper.bean.params.oci.tenant.UpdateUserBasicParams;
 import com.yohann.ocihelper.bean.params.oci.tenant.UpdateUserRecoveryEmailParams;
 import com.yohann.ocihelper.bean.response.oci.tenant.TenantInfoRsp;
+import com.yohann.ocihelper.config.OracleInstanceFetcher;
+import com.yohann.ocihelper.service.ISysService;
 import com.yohann.ocihelper.service.ITenantService;
 import com.yohann.ocihelper.telegram.handler.AbstractCallbackHandler;
 import com.yohann.ocihelper.telegram.storage.ConfigSessionStorage;
 import com.yohann.ocihelper.telegram.storage.PaginationStorage;
 import com.yohann.ocihelper.telegram.storage.TenantUserSelectionStorage;
 import com.yohann.ocihelper.telegram.utils.TenantUserMenuHelper;
+import com.yohann.ocihelper.utils.OciUtils;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import org.telegram.telegrambots.meta.api.methods.botapimethods.BotApiMethod;
@@ -20,6 +25,7 @@ import org.telegram.telegrambots.meta.api.objects.CallbackQuery;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.InlineKeyboardMarkup;
 import org.telegram.telegrambots.meta.generics.TelegramClient;
 
+import java.io.File;
 import java.io.Serializable;
 import java.util.Collections;
 import java.util.List;
@@ -110,6 +116,91 @@ public class TenantUserManagementHandler extends AbstractCallbackHandler {
 
     static String getOciCfgId(long chatId) {
         return TenantUserSelectionStorage.getInstance().getConfigContext(chatId);
+    }
+
+    static String buildDiagnosisText(String ociCfgId, TenantInfoRsp.TenantUserInfo cachedUser) {
+        ISysService sysService = SpringUtil.getBean(ISysService.class);
+        SysUserDTO authUser = sysService.getOciUser(ociCfgId);
+
+        String endpoint = "未获取";
+        String domainUserId = "未获取";
+        String domainUserOcid = defaultValue(cachedUser.getId(), "未获取");
+        String domainDisplayName = defaultValue(cachedUser.getName(), "未知");
+        String domainEmail = defaultValue(cachedUser.getEmail(), "未设置");
+        String domainError = null;
+
+        try (OracleInstanceFetcher fetcher = new OracleInstanceFetcher(authUser)) {
+            endpoint = defaultValue(OciUtils.getDomain(fetcher.getIdentityClient(), authUser.getOciCfg().getTenantId()), "未获取");
+            if (!"未获取".equals(endpoint)) {
+                fetcher.getIdentityDomainsClient().setEndpoint(endpoint);
+                com.oracle.bmc.identitydomains.model.User domainUser = fetcher.getIdentityDomainsClient()
+                        .getUser(GetUserRequest.builder().userId(cachedUser.getId()).build())
+                        .getUser();
+                if (domainUser != null) {
+                    domainUserId = defaultValue(domainUser.getId(), domainUserId);
+                    domainUserOcid = defaultValue(domainUser.getOcid(), domainUserOcid);
+                    domainDisplayName = defaultValue(domainUser.getDisplayName(), domainDisplayName);
+                    domainEmail = defaultValue(domainUser.getUserName(), domainEmail);
+                }
+            }
+        } catch (Exception e) {
+            log.warn("Failed to collect tenant user diagnostic info, ociCfgId={}, userId={}", ociCfgId, cachedUser.getId(), e);
+            domainError = shortenMessage(e.getMessage());
+        }
+
+        StringBuilder message = new StringBuilder();
+        message.append("【权限诊断】\n\n");
+        message.append("签名说明: Identity Domains 请求使用当前 OCI 配置里的 API User 签名，不会切换成目标用户身份。\n\n");
+        message.append("当前配置:\n");
+        message.append(String.format("配置名: %s\n", md(defaultValue(authUser.getUsername(), "未知"))));
+        message.append(String.format("区域: %s\n", md(defaultValue(authUser.getOciCfg().getRegion(), "未知"))));
+        message.append(String.format("租户 OCID: %s\n", md(defaultValue(authUser.getOciCfg().getTenantId(), "未知"))));
+        message.append(String.format("签名用户 OCID: %s\n", md(defaultValue(authUser.getOciCfg().getUserId(), "未知"))));
+        message.append(String.format("指纹: %s\n", md(defaultValue(authUser.getOciCfg().getFingerprint(), "未知"))));
+        message.append(String.format("私钥文件: %s\n\n", md(getFileName(authUser.getOciCfg().getPrivateKeyPath()))));
+
+        message.append("Identity Domains:\n");
+        message.append(String.format("Endpoint: %s\n", md(endpoint)));
+        message.append(String.format("目标用户请求 userId: %s\n", md(defaultValue(cachedUser.getId(), "未知"))));
+        message.append(String.format("目标用户 domain id: %s\n", md(domainUserId)));
+        message.append(String.format("目标用户 domain ocid: %s\n", md(domainUserOcid)));
+        message.append(String.format("目标用户名称: %s\n", md(domainDisplayName)));
+        message.append(String.format("目标用户邮箱: %s\n", md(domainEmail)));
+        message.append(String.format("当前 MFA 状态: %s\n", Boolean.TRUE.equals(cachedUser.getIsMfaActivated()) ? "已启用" : "未启用"));
+        if (domainError != null) {
+            message.append(String.format("域信息补充: %s\n", md(domainError)));
+        }
+
+        message.append("\n权限判断:\n");
+        message.append("1. 指定密码 / 随机重置密码 报 401:\n");
+        message.append("需要 Help Desk Administrator 或更高角色。\n");
+        message.append("2. 设置 / 清空 recovery email 报 401:\n");
+        message.append("需要 Users | ALL，通常是 User Manager、User Administrator 或 Identity Domain Administrator。\n");
+        message.append("3. 清除 MFA 报 401:\n");
+        message.append("需要 AuthenticationFactorsRemover | POST，Help Desk Administrator 或更高角色可执行。\n");
+        message.append("4. 如果这三类都报 401:\n");
+        message.append("当前配置账号大概率只有 Security Administrator，或者根本没有分配到目标 Identity Domain 的管理员角色。");
+        return message.toString();
+    }
+
+    static String md(String text) {
+        return TenantUserMenuHelper.escapeMarkdown(defaultValue(text, "未设置"));
+    }
+
+    static String defaultValue(String value, String defaultValue) {
+        return value == null || value.isBlank() ? defaultValue : value;
+    }
+
+    static String getFileName(String path) {
+        if (path == null || path.isBlank()) {
+            return "未设置";
+        }
+        return new File(path).getName();
+    }
+
+    static String shortenMessage(String message) {
+        String normalized = defaultValue(message, "未知错误").replace("\r", " ").replace("\n", " ");
+        return normalized.length() > 160 ? normalized.substring(0, 160) + "..." : normalized;
     }
 
     static BotApiMethod<? extends Serializable> buildTenantEditMessage(CallbackQuery callbackQuery,
@@ -329,6 +420,43 @@ class TenantUserClearRecoveryEmailHandler extends AbstractCallbackHandler {
     @Override
     public String getCallbackPattern() {
         return "tenant_user_clear_recovery_email:";
+    }
+}
+
+@Slf4j
+@Component
+class TenantUserDiagnosisHandler extends AbstractCallbackHandler {
+
+    @Override
+    public BotApiMethod<? extends Serializable> handle(CallbackQuery callbackQuery, TelegramClient telegramClient) {
+        int userIndex = Integer.parseInt(callbackQuery.getData().split(":", 2)[1]);
+        long chatId = callbackQuery.getMessage().getChatId();
+        String ociCfgId = TenantUserManagementHandler.getOciCfgId(chatId);
+        TenantInfoRsp.TenantUserInfo user = TenantUserManagementHandler.getCachedUser(chatId, userIndex);
+
+        if (ociCfgId == null || user == null) {
+            return buildEditMessage(callbackQuery, "❌ 用户不存在或上下文已失效，请重新打开用户列表");
+        }
+
+        try {
+            return buildEditMessage(
+                    callbackQuery,
+                    TenantUserManagementHandler.buildDiagnosisText(ociCfgId, user),
+                    TenantUserMenuHelper.buildDiagnosisMarkup(ociCfgId, userIndex)
+            );
+        } catch (Exception e) {
+            log.error("Failed to diagnose tenant user permissions, ociCfgId={}, userId={}", ociCfgId, user.getId(), e);
+            return buildEditMessage(
+                    callbackQuery,
+                    "❌ 生成诊断信息失败：" + TenantUserManagementHandler.shortenMessage(e.getMessage()),
+                    TenantUserMenuHelper.buildUserDetailMarkup(ociCfgId, userIndex)
+            );
+        }
+    }
+
+    @Override
+    public String getCallbackPattern() {
+        return "tenant_user_diagnose:";
     }
 }
 

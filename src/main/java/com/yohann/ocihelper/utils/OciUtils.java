@@ -358,11 +358,21 @@ public class OciUtils {
     public static void removeUserMfaFactors(OracleInstanceFetcher fetcher, String userId) {
         try {
             IdentityDomainsClient client = prepareIdentityDomainsClient(fetcher);
+            User currentUser = client.getUser(GetUserRequest.builder()
+                    .userId(userId)
+                    .build()).getUser();
+
+            if (currentUser == null) {
+                throw new RuntimeException("User not found in Identity Domains: " + userId);
+            }
+
             AuthenticationFactorsRemover remover = AuthenticationFactorsRemover.builder()
                     .schemas(Collections.singletonList(AUTHENTICATION_FACTORS_REMOVER_SCHEMA))
                     .type(AuthenticationFactorsRemover.Type.Mfa)
                     .user(AuthenticationFactorsRemoverUser.builder()
-                            .value(userId)
+                            .value(currentUser.getId())
+                            .ocid(currentUser.getOcid())
+                            .display(currentUser.getDisplayName())
                             .build())
                     .build();
 

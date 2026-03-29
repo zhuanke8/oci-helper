@@ -110,13 +110,14 @@ public final class TenantUserMenuHelper {
         message.append(String.format("描述: %s\n", escapeMarkdown(defaultText(user.getDescription(), "无"))));
         message.append(String.format("创建时间: %s\n", escapeMarkdown(defaultText(user.getTimeCreated(), "未知"))));
         message.append(String.format("最后成功登录: %s\n\n", escapeMarkdown(defaultText(user.getLastSuccessfulLoginTime(), "未知"))));
-        message.append("可执行操作：清除 MFA、随机重置密码、指定密码、设置 recovery email、清空 recovery email。");
+        message.append("可执行操作：权限诊断、清除 MFA、随机重置密码、指定密码、设置 recovery email、清空 recovery email。");
         return message.toString();
     }
 
     public static InlineKeyboardMarkup buildUserDetailMarkup(String ociCfgId, int userIndex) {
         List<InlineKeyboardRow> keyboard = new ArrayList<>();
         keyboard.add(new InlineKeyboardRow(
+                KeyboardBuilder.button("🩺 权限诊断", "tenant_user_diagnose:" + userIndex),
                 KeyboardBuilder.button("🧹 清除 MFA", "tenant_user_clear_mfa:" + userIndex)
         ));
         keyboard.add(new InlineKeyboardRow(
@@ -161,6 +162,18 @@ public final class TenantUserMenuHelper {
         ));
     }
 
+    public static InlineKeyboardMarkup buildDiagnosisMarkup(String ociCfgId, int userIndex) {
+        return new InlineKeyboardMarkup(List.of(
+                new InlineKeyboardRow(
+                        KeyboardBuilder.button("◀️ 返回用户详情", "tenant_user_select:" + userIndex)
+                ),
+                new InlineKeyboardRow(
+                        KeyboardBuilder.button("◀️ 返回用户列表", "tenant_user_management:" + ociCfgId)
+                ),
+                KeyboardBuilder.buildCancelRow()
+        ));
+    }
+
     private static String buildUserButtonText(TenantInfoRsp.TenantUserInfo user, int index) {
         String label = defaultText(user.getName(), defaultText(user.getEmail(), "用户"));
         if (label.length() > 8) {
@@ -173,7 +186,7 @@ public final class TenantUserMenuHelper {
         return StringUtils.isBlank(value) ? defaultValue : value;
     }
 
-    private static String escapeMarkdown(String text) {
+    public static String escapeMarkdown(String text) {
         if (text == null) {
             return "";
         }

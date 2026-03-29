@@ -20,6 +20,7 @@ import org.telegram.telegrambots.meta.api.methods.updatingmessages.EditMessageTe
 import org.telegram.telegrambots.meta.api.objects.Update;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.InlineKeyboardMarkup;
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
+import org.telegram.telegrambots.meta.exceptions.TelegramApiRequestException;
 import org.telegram.telegrambots.meta.generics.TelegramClient;
 
 import java.io.Serializable;
@@ -744,6 +745,12 @@ public class TgBot implements LongPollingSingleThreadUpdateConsumer {
                     log.warn("未找到处理回调数据的处理器: {}", callbackData);
                 }
             } catch (TelegramApiException e) {
+                if (e instanceof TelegramApiRequestException
+                        && e.getMessage() != null
+                        && e.getMessage().contains("message is not modified")) {
+                    log.debug("跳过未变化的 TG 消息编辑: callbackData={}", callbackData);
+                    return;
+                }
                 log.error("处理回调查询失败: callbackData={}", callbackData, e);
             } catch (Exception e) {
                 log.error("处理回调时发生意外错误: callbackData={}", callbackData, e);
