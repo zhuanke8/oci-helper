@@ -1,6 +1,7 @@
 package com.yohann.ocihelper.service;
 
 import com.yohann.ocihelper.bean.params.oci.tenant.*;
+import com.yohann.ocihelper.bean.response.oci.tenant.PasswordOperationRsp;
 import com.yohann.ocihelper.bean.response.oci.tenant.TenantInfoRsp;
 
 /**
@@ -16,7 +17,13 @@ public interface ITenantService {
 
     void deleteApiKey(UpdateUserBasicParams params);
 
-    void resetPassword(UpdateUserBasicParams params);
+    PasswordOperationRsp resetPassword(ResetUserPasswordParams params);
+
+    PasswordOperationRsp updateUserPassword(UpdateUserPasswordParams params);
+
+    String resetConsolePassword(UpdateUserBasicParams params);
+
+    String updateRecoveryEmail(UpdateUserRecoveryEmailParams params);
 
     void updateUserInfo(UpdateUserInfoParams params);
 

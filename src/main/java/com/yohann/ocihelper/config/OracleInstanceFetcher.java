@@ -391,8 +391,8 @@ public class OracleInstanceFetcher implements Closeable {
                         .userId(user.getOciCfg().getUserId())
                         .build());
         String password = uIPassword.getUIPassword().getPassword();
-        log.info("用户:[{}],区域:[{}],成功创建/重置登录密码,新密码:【 {} 】",
-                user.getUsername(), user.getOciCfg().getRegion(), password);
+        log.info("用户:[{}],区域:[{}],成功创建/重置登录密码",
+                user.getUsername(), user.getOciCfg().getRegion());
         return password;
     }
 

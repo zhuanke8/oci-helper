@@ -9,17 +9,29 @@ import com.oracle.bmc.identitydomains.IdentityDomainsClient;
 import com.oracle.bmc.identitydomains.model.NotificationSetting;
 import com.oracle.bmc.identitydomains.model.PasswordPolicies;
 import com.oracle.bmc.identitydomains.model.PasswordPolicy;
+import com.oracle.bmc.identitydomains.model.User;
+import com.oracle.bmc.identitydomains.model.UserEmails;
+import com.oracle.bmc.identitydomains.model.UserPasswordChanger;
+import com.oracle.bmc.identitydomains.model.UserPasswordResetter;
+import com.oracle.bmc.identitydomains.requests.GetUserRequest;
 import com.oracle.bmc.identitydomains.requests.GetNotificationSettingRequest;
 import com.oracle.bmc.identitydomains.requests.ListPasswordPoliciesRequest;
+import com.oracle.bmc.identitydomains.requests.PutUserRequest;
 import com.oracle.bmc.identitydomains.requests.PutNotificationSettingRequest;
 import com.oracle.bmc.identitydomains.requests.PutPasswordPolicyRequest;
+import com.oracle.bmc.identitydomains.requests.PutUserPasswordChangerRequest;
+import com.oracle.bmc.identitydomains.requests.PutUserPasswordResetterRequest;
 import com.oracle.bmc.identitydomains.responses.ListPasswordPoliciesResponse;
 import com.oracle.bmc.identitydomains.responses.PutPasswordPolicyResponse;
+import com.oracle.bmc.identitydomains.responses.PutUserPasswordChangerResponse;
+import com.oracle.bmc.identitydomains.responses.PutUserPasswordResetterResponse;
+import com.yohann.ocihelper.bean.response.oci.tenant.PasswordOperationRsp;
 import com.yohann.ocihelper.config.OracleInstanceFetcher;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 
 import java.util.*;
+import java.util.stream.Collectors;
 import java.util.regex.Pattern;
 
 /**
@@ -33,8 +45,13 @@ public class OciUtils {
 
     private static final String NOTIFICATION_SETTINGS_SCHEMA =
             "urn:ietf:params:scim:schemas:oracle:idcs:NotificationSettings";
+    private static final String USER_PASSWORD_CHANGER_SCHEMA =
+            "urn:ietf:params:scim:schemas:oracle:idcs:UserPasswordChanger";
+    private static final String USER_PASSWORD_RESETTER_SCHEMA =
+            "urn:ietf:params:scim:schemas:oracle:idcs:UserPasswordResetter";
     private static final String NOTIFICATION_SETTINGS_ID = "NotificationSettings";
     private static final Pattern EMAIL_PATTERN = Pattern.compile("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    private static final UserEmails.Type RECOVERY_EMAIL_TYPE = UserEmails.Type.create("recovery");
 
     /**
      * 统一的返回结果封装
@@ -72,7 +89,7 @@ public class OciUtils {
      */
     public static Result getCurrentRecipients(OracleInstanceFetcher fetcher) {
         try {
-            IdentityDomainsClient client = fetcher.getIdentityDomainsClient();
+            IdentityDomainsClient client = prepareIdentityDomainsClient(fetcher);
             NotificationSetting setting = client.getNotificationSetting(
                     GetNotificationSettingRequest.builder().notificationSettingId(NOTIFICATION_SETTINGS_ID).build()
             ).getNotificationSetting();
@@ -107,7 +124,7 @@ public class OciUtils {
         }
 
         try {
-            IdentityDomainsClient client = fetcher.getIdentityDomainsClient();
+            IdentityDomainsClient client = prepareIdentityDomainsClient(fetcher);
             NotificationSetting old = client.getNotificationSetting(
                     GetNotificationSettingRequest.builder().notificationSettingId(NOTIFICATION_SETTINGS_ID).build()
             ).getNotificationSetting();
@@ -208,7 +225,7 @@ public class OciUtils {
      */
     public static Result updateTestMode(OracleInstanceFetcher fetcher, boolean enable) {
         try {
-            IdentityDomainsClient client = fetcher.getIdentityDomainsClient();
+            IdentityDomainsClient client = prepareIdentityDomainsClient(fetcher);
             NotificationSetting old = client.getNotificationSetting(
                     GetNotificationSettingRequest.builder().notificationSettingId(NOTIFICATION_SETTINGS_ID).build()
             ).getNotificationSetting();
@@ -265,22 +282,12 @@ public class OciUtils {
     private static boolean updatePasswordExpiration(OracleInstanceFetcher fetcher, int expirationDays) {
 
         try {
-            String tenantId = fetcher.getUser().getOciCfg().getTenantId();
-            IdentityClient identityClient = fetcher.getIdentityClient();
-            IdentityDomainsClient identityDomainsClient = fetcher.getIdentityDomainsClient();
-
-            // 获取 Domain URL
-            String domainUrl = getDomain(identityClient, tenantId);
-            if (StringUtils.isBlank(domainUrl)) {
-                log.warn("No active domain found for tenant: {}", tenantId);
-                return false;
-            }
-            identityDomainsClient.setEndpoint(domainUrl);
+            IdentityDomainsClient identityDomainsClient = prepareIdentityDomainsClient(fetcher);
 
             // 查询当前策略
             List<PasswordPolicy> policies = listPasswordPolicies(identityDomainsClient);
             if (policies.isEmpty()) {
-                log.warn("No password policies found for domain: {}", domainUrl);
+                log.warn("No password policies found for tenant: {}", fetcher.getUser().getOciCfg().getTenantId());
                 return false;
             }
 
@@ -323,20 +330,123 @@ public class OciUtils {
     public static List<com.oracle.bmc.identitydomains.model.PasswordPolicy> getCurrentPasswordPolicy(OracleInstanceFetcher fetcher) {
 
         try {
-            String tenantId = fetcher.getUser().getOciCfg().getTenantId();
-            IdentityClient identityClient = fetcher.getIdentityClient();
-            IdentityDomainsClient identityDomainsClient = fetcher.getIdentityDomainsClient();
-
-            String domainUrl = getDomain(identityClient, tenantId);
-            if (StringUtils.isBlank(domainUrl)) {
-                return Collections.emptyList();
-            }
-            identityDomainsClient.setEndpoint(domainUrl);
-
-            return listPasswordPolicies(identityDomainsClient);
+            return listPasswordPolicies(prepareIdentityDomainsClient(fetcher));
         } catch (Exception e) {
             log.error("Failed to get password policies: {}", e.getMessage(), e);
             return Collections.emptyList();
+        }
+    }
+
+    /**
+     * 获取当前自定义密码策略
+     */
+    public static PasswordPolicy getCurrentCustomPasswordPolicy(OracleInstanceFetcher fetcher) {
+        return getCurrentPasswordPolicy(fetcher).parallelStream()
+                .filter(x -> x.getPasswordStrength() == PasswordPolicy.PasswordStrength.Custom)
+                .findAny()
+                .orElse(PasswordPolicy.builder().build());
+    }
+
+    /**
+     * Identity Domains 指定密码修改
+     */
+    public static PasswordOperationRsp changeUserPassword(OracleInstanceFetcher fetcher,
+                                                          String userId,
+                                                          String newPassword,
+                                                          Boolean bypassNotification) {
+        try {
+            IdentityDomainsClient client = prepareIdentityDomainsClient(fetcher);
+            UserPasswordChanger changer = UserPasswordChanger.builder()
+                    .schemas(Collections.singletonList(USER_PASSWORD_CHANGER_SCHEMA))
+                    .password(newPassword)
+                    .bypassNotification(Boolean.TRUE.equals(bypassNotification))
+                    .build();
+
+            PutUserPasswordChangerResponse response = client.putUserPasswordChanger(
+                    PutUserPasswordChangerRequest.builder()
+                            .userPasswordChangerId(userId)
+                            .userPasswordChanger(changer)
+                            .build()
+            );
+
+            UserPasswordChanger rsp = response.getUserPasswordChanger();
+            return PasswordOperationRsp.builder()
+                    .userId(userId)
+                    .resourceId(rsp == null ? null : rsp.getId())
+                    .operation("CHANGE_PASSWORD")
+                    .notificationBypassed(Boolean.TRUE.equals(bypassNotification))
+                    .build();
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to change user password", e);
+        }
+    }
+
+    /**
+     * Identity Domains 随机重置密码
+     */
+    public static PasswordOperationRsp resetUserPassword(OracleInstanceFetcher fetcher,
+                                                         String userId,
+                                                         Boolean bypassNotification,
+                                                         Boolean userFlowControlledByExternalClient) {
+        try {
+            IdentityDomainsClient client = prepareIdentityDomainsClient(fetcher);
+            UserPasswordResetter resetter = UserPasswordResetter.builder()
+                    .schemas(Collections.singletonList(USER_PASSWORD_RESETTER_SCHEMA))
+                    .bypassNotification(Boolean.TRUE.equals(bypassNotification))
+                    .userFlowControlledByExternalClient(Boolean.TRUE.equals(userFlowControlledByExternalClient))
+                    .build();
+
+            PutUserPasswordResetterResponse response = client.putUserPasswordResetter(
+                    PutUserPasswordResetterRequest.builder()
+                            .userPasswordResetterId(userId)
+                            .userPasswordResetter(resetter)
+                            .build()
+            );
+
+            UserPasswordResetter rsp = response.getUserPasswordResetter();
+            return PasswordOperationRsp.builder()
+                    .userId(userId)
+                    .resourceId(rsp == null ? null : rsp.getId())
+                    .operation("RESET_PASSWORD")
+                    .notificationBypassed(Boolean.TRUE.equals(bypassNotification))
+                    .userFlowControlledByExternalClient(Boolean.TRUE.equals(userFlowControlledByExternalClient))
+                    .build();
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to reset user password", e);
+        }
+    }
+
+    /**
+     * Identity Domains 恢复邮箱更新
+     */
+    public static String updateUserRecoveryEmail(OracleInstanceFetcher fetcher,
+                                                 String userId,
+                                                 String recoveryEmail) {
+        try {
+            IdentityDomainsClient client = prepareIdentityDomainsClient(fetcher);
+            User currentUser = client.getUser(GetUserRequest.builder()
+                    .userId(userId)
+                    .build()).getUser();
+
+            if (currentUser == null) {
+                throw new RuntimeException("User not found in Identity Domains: " + userId);
+            }
+
+            String normalizedRecoveryEmail = normalizeOptionalEmail(recoveryEmail);
+            List<UserEmails> mergedEmails = mergeRecoveryEmail(currentUser.getEmails(), normalizedRecoveryEmail);
+
+            User updatedUser = currentUser.toBuilder()
+                    .emails(mergedEmails)
+                    .build();
+
+            User rsp = client.putUser(PutUserRequest.builder()
+                    .userId(userId)
+                    .user(updatedUser)
+                    .build()).getUser();
+
+            return extractRecoveryEmail(rsp == null ? updatedUser : rsp);
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to update user recovery email", e);
         }
     }
 
@@ -349,6 +459,68 @@ public class OciUtils {
         );
         PasswordPolicies wrapper = resp.getPasswordPolicies();
         return wrapper != null && wrapper.getResources() != null ? wrapper.getResources() : Collections.emptyList();
+    }
+
+    private static String normalizeOptionalEmail(String email) {
+        if (StringUtils.isBlank(email)) {
+            return null;
+        }
+        String normalized = email.trim().toLowerCase(Locale.ROOT);
+        if (!isValidEmail(normalized)) {
+            throw new IllegalArgumentException("Invalid recovery email: " + email);
+        }
+        return normalized;
+    }
+
+    private static List<UserEmails> mergeRecoveryEmail(List<UserEmails> existingEmails, String recoveryEmail) {
+        List<UserEmails> merged = Optional.ofNullable(existingEmails)
+                .orElse(Collections.emptyList())
+                .stream()
+                .filter(Objects::nonNull)
+                .filter(email -> !RECOVERY_EMAIL_TYPE.equals(email.getType()))
+                .map(OciUtils::copyWritableEmail)
+                .collect(Collectors.toCollection(ArrayList::new));
+
+        if (StringUtils.isNotBlank(recoveryEmail)) {
+            merged.add(UserEmails.builder()
+                    .value(recoveryEmail)
+                    .type(RECOVERY_EMAIL_TYPE)
+                    .primary(Boolean.FALSE)
+                    .build());
+        }
+        return merged;
+    }
+
+    private static UserEmails copyWritableEmail(UserEmails email) {
+        return UserEmails.builder()
+                .value(email.getValue())
+                .type(email.getType())
+                .primary(email.getPrimary())
+                .build();
+    }
+
+    private static String extractRecoveryEmail(User user) {
+        return Optional.ofNullable(user)
+                .map(User::getEmails)
+                .orElse(Collections.emptyList())
+                .stream()
+                .filter(Objects::nonNull)
+                .filter(email -> RECOVERY_EMAIL_TYPE.equals(email.getType()))
+                .map(UserEmails::getValue)
+                .filter(StringUtils::isNotBlank)
+                .findFirst()
+                .orElse(null);
+    }
+
+    private static IdentityDomainsClient prepareIdentityDomainsClient(OracleInstanceFetcher fetcher) {
+        String tenantId = fetcher.getUser().getOciCfg().getTenantId();
+        String domainUrl = getDomain(fetcher.getIdentityClient(), tenantId);
+        if (StringUtils.isBlank(domainUrl)) {
+            throw new RuntimeException("No active Identity Domain found for tenant: " + tenantId);
+        }
+        IdentityDomainsClient identityDomainsClient = fetcher.getIdentityDomainsClient();
+        identityDomainsClient.setEndpoint(domainUrl);
+        return identityDomainsClient;
     }
 
     /**

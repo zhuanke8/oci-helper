@@ -2,13 +2,15 @@ package com.yohann.ocihelper.controller;
 
 import com.yohann.ocihelper.bean.ResponseData;
 import com.yohann.ocihelper.bean.params.oci.tenant.GetTenantInfoParams;
+import com.yohann.ocihelper.bean.params.oci.tenant.ResetUserPasswordParams;
 import com.yohann.ocihelper.bean.params.oci.tenant.UpdatePwdExpirationPolicyParams;
 import com.yohann.ocihelper.bean.params.oci.tenant.UpdateUserBasicParams;
 import com.yohann.ocihelper.bean.params.oci.tenant.UpdateUserInfoParams;
+import com.yohann.ocihelper.bean.params.oci.tenant.UpdateUserPasswordParams;
+import com.yohann.ocihelper.bean.params.oci.tenant.UpdateUserRecoveryEmailParams;
+import com.yohann.ocihelper.bean.response.oci.tenant.PasswordOperationRsp;
 import com.yohann.ocihelper.bean.response.oci.tenant.TenantInfoRsp;
 import com.yohann.ocihelper.service.ITenantService;
-import com.yohann.ocihelper.utils.CommonUtils;
-import org.springframework.validation.BindingResult;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -53,9 +55,28 @@ public class TenantController {
     }
 
     @RequestMapping("resetPassword")
-    public ResponseData<Void> resetPassword(@Validated @RequestBody UpdateUserBasicParams params) {
-        tenantService.resetPassword(params);
-        return ResponseData.successData("重置用户密码成功");
+    public ResponseData<PasswordOperationRsp> resetPassword(@Validated @RequestBody ResetUserPasswordParams params) {
+        PasswordOperationRsp rsp = tenantService.resetPassword(params);
+        return ResponseData.successData(rsp, "Identity Domains 随机密码已重置");
+    }
+
+    @RequestMapping("changePassword")
+    public ResponseData<PasswordOperationRsp> changePassword(@Validated @RequestBody UpdateUserPasswordParams params) {
+        PasswordOperationRsp rsp = tenantService.updateUserPassword(params);
+        return ResponseData.successData(rsp, "Identity Domains 用户密码修改成功");
+    }
+
+    @RequestMapping("resetConsolePassword")
+    public ResponseData<String> resetConsolePassword(@Validated @RequestBody UpdateUserBasicParams params) {
+        String password = tenantService.resetConsolePassword(params);
+        return ResponseData.successData(password, "控制台密码已重置");
+    }
+
+    @RequestMapping("updateRecoveryEmail")
+    public ResponseData<String> updateRecoveryEmail(@Validated @RequestBody UpdateUserRecoveryEmailParams params) {
+        String recoveryEmail = tenantService.updateRecoveryEmail(params);
+        String msg = recoveryEmail == null ? "Identity Domains 恢复邮箱已清空" : "Identity Domains 恢复邮箱更新成功";
+        return ResponseData.successData(recoveryEmail, msg);
     }
 
     @RequestMapping("updateUserInfo")

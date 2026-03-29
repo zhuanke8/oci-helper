@@ -216,6 +216,24 @@ chmod +x /app/oci-helper/sh_oci-helper_install.sh && cd /app/oci-helper && ./sh_
 
 ![image.png](./img/9-tg-bot.jpg)
 
+## Identity Domains 密码管理接口
+
+新增了 3 个租户密码管理接口，均位于 `/api/tenant`：
+
+- `resetPassword`
+  - 使用 Identity Domains 触发随机密码重置
+  - 请求体示例：`{"ociCfgId":"xxx","userId":"ocid1.user...","bypassNotification":false,"userFlowControlledByExternalClient":false}`
+- `changePassword`
+  - 使用 Identity Domains 将目标用户密码修改为指定值
+  - 请求体示例：`{"ociCfgId":"xxx","userId":"ocid1.user...","password":"NewPassword123!","bypassNotification":false}`
+- `resetConsolePassword`
+  - 保留原有 OCI Console 登录密码重置能力
+  - 请求体示例：`{"ociCfgId":"xxx","userId":"ocid1.user..."}`
+- `updateRecoveryEmail`
+  - 使用 Identity Domains 更新或清空用户 recovery email
+  - 请求体示例：`{"ociCfgId":"xxx","userId":"ocid1.user...","recoveryEmail":"recovery@example.com"}`
+  - 如果传空字符串或 `null`，会清空该用户当前的 recovery email
+
 <details>
     <summary> ☜ 点击查看更多 👨‍💻</summary>
 

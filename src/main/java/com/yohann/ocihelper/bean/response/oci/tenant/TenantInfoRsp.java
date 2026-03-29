@@ -23,12 +23,16 @@ public class TenantInfoRsp {
     private List<TenantUserInfo> userList;
     private String creatTime;
     private Integer passwordExpiresAfter;
+    private String passwordPolicyId;
+    private String passwordPolicyName;
+    private String passwordStrength;
 
     @Data
     public static class TenantUserInfo{
            private String id;
            private String name;
            private String email;
+           private String description;
            private String lifecycleState;
            private Boolean emailVerified;
            private Boolean isMfaActivated;
